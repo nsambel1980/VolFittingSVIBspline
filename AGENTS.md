@@ -51,9 +51,9 @@ arbitrage for **any** coefficients. There is no arbitrage penalty or check grid 
 ```bash
 pip install -r requirements.txt
 export PYTHONPATH=src
-pytest -q                                   # ~30 s
+pytest -q                                   # ~20 s
 python -m volsurf fit data/SPX_20261119_1522.json --out results/tmp
 ./reproduce.sh                              # quick; ./reproduce.sh full for every study
 ```
 
-One chain takes 5–10 minutes on one core with the default configuration.
+One chain takes about 25–30 minutes on one core with the default configuration.
