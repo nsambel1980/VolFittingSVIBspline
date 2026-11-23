@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Reproduce the results.
-#   ./reproduce.sh          tests, then fit every chain in DATA_DIR and the cheap skew study    (~1.5 h)
+#   ./reproduce.sh          tests, then fit every chain in DATA_DIR and the cheap skew study    (~1 h)
 #   ./reproduce.sh full     also the stability, number-of-modes and coordinate studies          (~10 h)
 set -euo pipefail
 cd "$(dirname "$0")"

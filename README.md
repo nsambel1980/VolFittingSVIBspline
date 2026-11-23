@@ -55,20 +55,26 @@ and each day's parameters, checks and figures are in `results/days/<YYYYMMDD>/`.
 
 | | 13 Nov | 17 Nov | 19 Nov |
 |---|---|---|---|
-| quotes inside bid–ask | 100% | 99.9% | 98.3% |
-| ATMF gap after relinearization | 0.014 | 0.012 | 0.012 vol pts |
-| min density / max density | ≥ 0 | ≥ 0 | ≥ 0 |
-| local-vol jump at expiries | ≤ 0.1 | ≤ 0.1 | ≤ 0.1 vol pts |
+| free energy F | −1742.5 | −1725.6 | −1784.0 |
+| quotes inside bid–ask | 100.0% | 99.9% | 98.3% |
+| ATMF gap after relinearization | 0.014 | 0.014 | 0.012 vol pts |
+| ATM skew gap | 5.8e-4 | 2.6e-4 | 2.9e-4 |
+| min density / max density | −1.9e-9 | ≈0 | ≈0 |
+| min price change between time steps | −3.6e-13 | −4.2e-13 | −3.3e-13 |
+| largest local-vol jump at an expiry | 0.08 | 0.09 | 0.07 vol pts |
 
-The studies behind the design choices are in `results/`:
+The density and price-change minima are zero to solver precision: no butterfly or calendar arbitrage.
+
+The studies behind the design choices are run by `exp/`. `skew_interp/` is committed; the other three
+are from the prototype runs and are rebuilt by `./reproduce.sh full`:
 
 - `n_modes/`: free energy against K; it flattens around 20–28, and the default is 24.
 - `coordinates/`: uniform x = k/√θ beats asinh-warped coordinates by 140–440 in F; ln T with 4 splines is
   marginally best.
 - `stability/`: the leading modes are stable day to day (cosines about 0.97). Reusing one day's modes costs
   5–15 in F.
-- `skew_interp/`: linear-in-T skew interpolation makes 2.5–5 vol-point local-vol jumps at the expiries; PCHIP
-  in θ removes them.
+- `skew_interp/`: linear-in-T skew interpolation makes jumps of about 3.5 vol points in local vol at the
+  expiries; PCHIP in θ cuts them to about 0.06.
 
 ![fit](results/days/20261119/fit_vs_bidask.png)
 ![local vol](results/days/localvol_3d.png)

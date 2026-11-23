@@ -56,4 +56,4 @@ python -m volsurf fit data/SPX_20261119_1522.json --out results/tmp
 ./reproduce.sh                              # quick; ./reproduce.sh full for every study
 ```
 
-One chain takes about 25–30 minutes on one core with the default configuration.
+One chain takes 10–25 minutes on one core with the default configuration.
