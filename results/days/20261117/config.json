@@ -1,0 +1,68 @@
+{
+ "expiries": [
+  [
+   "SPX",
+   "261218"
+  ],
+  [
+   "SPX",
+   "270115"
+  ],
+  [
+   "SPX",
+   "270219"
+  ],
+  [
+   "SPX",
+   "270319"
+  ],
+  [
+   "SPX",
+   "270617"
+  ],
+  [
+   "SPX",
+   "270917"
+  ],
+  [
+   "SPX",
+   "271217"
+  ],
+  [
+   "SPX",
+   "280616"
+  ],
+  [
+   "SPX",
+   "281215"
+  ]
+ ],
+ "quote_x_lo": -3.5,
+ "quote_x_hi": 2.0,
+ "n_per_expiry": 36,
+ "parity_band": 0.08,
+ "skew_interp": "pchip",
+ "n_x": 19,
+ "n_t": 4,
+ "x_lo": -5.55,
+ "x_hi": 3.05,
+ "warp": 0.0,
+ "t_clock": "lnT",
+ "ell_x": 1.6,
+ "kappa_first_slice": 0.25,
+ "n_modes": 24,
+ "s_noise": 0.0005,
+ "tau_grid": [
+  0.05,
+  10.0,
+  18
+ ],
+ "gain_tol": 1e-07,
+ "max_iter": 300,
+ "tau_rounds": 4,
+ "relin_rounds": 1,
+ "dk": 0.0015,
+ "k_lo": -2.2,
+ "k_hi": 1.6,
+ "steps_per_interval": 40
+}
