@@ -4,17 +4,18 @@ import time
 from pathlib import Path
 import numpy as np
 from .config import Config
-from .market import build_market
+from .market import build_market, build_market_from_vols
 from .fit import fit_baseline, fit_modes, baseline
 from .modes import compute_modes
 from .relinearize import relinearize
 from .diagnostics import summary
 
 
-def run_day(path, cfg=Config(), modes=None, relin=True, log=print):
-    """Fit one option chain. `modes`: a previous day's modes (dict with V) to reuse; None computes them."""
+def run_day(source, cfg=Config(), modes=None, relin=True, log=print):
+    """Fit one surface. `source`: a Cboe chain path, or a market dict from build_market / build_market_from_vols.
+    `modes`: a previous day's modes (dict with V) to reuse; None computes them."""
     t0 = time.time()
-    mk = build_market(path, cfg)
+    mk = source if isinstance(source, dict) else build_market(source, cfg)
     base = fit_baseline(mk, cfg)
     log(f"  baseline: -lnL {base['nll']:.1f}, F {base['F']:.1f}")
     if modes is None:
@@ -40,13 +41,23 @@ def run_day(path, cfg=Config(), modes=None, relin=True, log=print):
     return out
 
 
+def fit_vols(expiries, cfg=Config(), quote_time=None, spot=None, **kw):
+    """Fit from implied vols instead of prices: build_market_from_vols(expiries, ...) then run_day.
+    `expiries`: one dict per expiry (see build_market_from_vols), or a CSV path read by load_vol_csv."""
+    if isinstance(expiries, (str, Path)):
+        from .market import load_vol_csv
+        expiries = load_vol_csv(expiries)
+    return run_day(build_market_from_vols(expiries, cfg, quote_time=quote_time, spot=spot), cfg, **kw)
+
+
 def parameters(res):
     """The fitted parameters, as plain numbers."""
     mk, b = res["mk"], res["model"].base
-    return dict(quote_time=str(mk["quote_time"]), spot=mk["spot"],
-                expiries=[f"20{q['ymd'][:2]}-{q['ymd'][2:4]}-{q['ymd'][4:]}" for q in mk["info"]],
+    return dict(quote_time=None if mk["quote_time"] is None else str(mk["quote_time"]), spot=mk["spot"],
+                expiries=[q["label"] for q in mk["info"]],
                 T=[float(t) for t in mk["T"]],
-                forward=[float(q["F"]) for q in mk["info"]], discount=[float(q["D"]) for q in mk["info"]],
+                forward=[None if q.get("F") is None else float(q["F"]) for q in mk["info"]],
+                discount=[None if q.get("D") is None else float(q["D"]) for q in mk["info"]],
                 atmf_vol=[float(x) for x in np.sqrt(b.th_i / mk["T"])], atmf_total_variance=[float(x) for x in b.th_i],
                 atm_skew=[float(x) for x in b.sk_i], eta=float(b.eta), gamma=float(b.gam),
                 q=[float(x) for x in res["q"]], coefficients=[float(x) for x in res["a"]], tau=float(res["fit"]["tau"]))

@@ -16,7 +16,7 @@ STYLE = {"figure.facecolor": SURF, "axes.facecolor": SURF, "savefig.facecolor": 
 
 
 def _label(q):
-    return f"20{q['ymd'][:2]}-{q['ymd'][2:4]}-{q['ymd'][4:]} ({q['T']:.2f}y)"
+    return f"{q['label']} ({q['T']:.2f}y)"
 
 
 def fit_vs_bidask(mk, model, out, title, baseline=None, extra=None):

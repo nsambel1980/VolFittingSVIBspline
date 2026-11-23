@@ -7,9 +7,10 @@ from volsurf.splines import full_bspline_basis, uniform_knots
 from volsurf.black import call, implied_w, durrleman, density_from_calls
 from volsurf.ssvi import SSVISlices, ssvi_w, psi_law
 from volsurf.likelihood import neg_log_lik
-from volsurf.market import build_market_from_rows
+from volsurf.market import build_market_from_rows, build_market_from_vols, load_vol_csv
 from volsurf.config import Config
-from conftest import true_q, T_SYN
+from conftest import true_q, T_SYN, synthetic_quotes, FAST
+import pytest
 
 
 # ---------------------------------------------------------------- splines
@@ -97,3 +98,54 @@ def test_parity_recovers_forward_and_discount():
     assert abs(mk["T"][0] - T) < 1e-12
     f = mk["full"][0]
     np.testing.assert_allclose(f["iv_mid"], np.sqrt(wf(f["k"]) / T), atol=1e-8)
+
+
+# ---------------------------------------------------------------- market: from implied vols
+def test_vols_give_the_same_market_as_prices():
+    """Prices -> market, then that market's vols -> build_market_from_vols: the same fitted quotes."""
+    F, D, T = 7000.0, 0.98, 0.5
+    expiry = dt.datetime(2027, 5, 19, 9, 30); quote_time = expiry - dt.timedelta(days=0.5 * 365)
+    th = 0.2 ** 2 * T; wf = lambda k: ssvi_w(k, th, psi_law(th, 1.2, 0.45), -0.7)
+    rows = []
+    for K in np.arange(5000.0, 8400.0, 25.0):
+        k = np.log(K / F); c = D * F * call(k, wf(k)); p = c - D * (F - K)
+        for cp, price in (("C", c), ("P", p)):
+            rows.append(dict(root="SPX", ymd="270519", cp=cp, K=K, bid=price * 0.99 - 0.05, ask=price * 1.01 + 0.05))
+    cfg = Config(expiries=(("SPX", "270519"),), n_per_expiry=25)
+    mp = build_market_from_rows(rows, 7050.0, quote_time, cfg)
+    f, q = mp["full"][0], mp["info"][0]
+    mv = build_market_from_vols([dict(expiry="2027-05-19", root="SPX", strike=f["K"], forward=q["F"],
+                                      iv_bid=f["iv_bid"], iv_ask=f["iv_ask"], iv_mid=f["iv_mid"])], cfg,
+                                quote_time=quote_time)
+    for key in ("T", "k", "i", "iv_bid", "iv_ask", "z", "theta_atm"):
+        np.testing.assert_allclose(mv[key], mp[key], atol=1e-12, err_msg=key)
+
+
+def test_vol_csv_round_trip(tmp_path):
+    expiries = synthetic_quotes(FAST, n_all=30)[0]
+    path = tmp_path / "vols.csv"
+    with open(path, "w") as fh:
+        fh.write("T,k,iv_bid,iv_ask\n")
+        for e in expiries:
+            for row in zip(e["k"], e["iv_bid"], e["iv_ask"]):
+                fh.write(f"{float(e['T'])!r}," + ",".join(repr(float(v)) for v in row) + "\n")
+    loaded = load_vol_csv(path)
+    assert [e["T"] for e in loaded] == [e["T"] for e in expiries]
+    a = build_market_from_vols(expiries, FAST.with_(n_per_expiry=12))
+    b = build_market_from_vols(loaded, FAST.with_(n_per_expiry=12))
+    for key in ("k", "i", "iv_bid", "iv_ask"):
+        np.testing.assert_allclose(a[key], b[key], atol=1e-15)
+
+
+def test_mid_vols_only_and_input_checks():
+    e = synthetic_quotes(FAST, n_all=30)[0][1]
+    mk = build_market_from_vols([dict(T=e["T"], k=e["k"], iv_mid=e["iv_mid"])], FAST)
+    assert np.all(mk["iv_ask"] - mk["iv_bid"] > 0) and np.all(mk["iv_ask"] - mk["iv_bid"] < 1e-4)
+    mk = build_market_from_vols([dict(T=e["T"], k=e["k"], iv_mid=e["iv_mid"], half_spread=0.002)], FAST)
+    np.testing.assert_allclose(mk["iv_ask"] - mk["iv_bid"], 0.004)
+    with pytest.raises(ValueError, match="percentages"):
+        build_market_from_vols([dict(T=e["T"], k=e["k"], iv_mid=100 * e["iv_mid"])], FAST)
+    with pytest.raises(ValueError, match="bracket"):
+        build_market_from_vols([dict(T=e["T"], k=e["k"][e["k"] < 0], iv_mid=e["iv_mid"][e["k"] < 0])], FAST)
+    with pytest.raises(ValueError, match="quote_time"):
+        build_market_from_vols([dict(expiry="2027-01-15", k=e["k"], iv_mid=e["iv_mid"])], FAST)

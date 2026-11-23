@@ -44,7 +44,9 @@ arbitrage for **any** coefficients. There is no arbitrage penalty or check grid 
 - Vol errors in reports are in **vol points** (×100).
 - `Config` is frozen. Change it with `cfg.with_(...)`, and save `config.json` next to every result.
 - Figures use `plotting.STYLE` and its palette. Keep the bid–ask band visible.
-- Keep the library free of I/O except `market.load_chain` and `pipeline.save_day`.
+- Keep the library free of I/O except `market.load_chain`, `market.load_vol_csv` and `pipeline.save_day`.
+- Both inputs (prices via `build_market_from_rows`, vols via `build_market_from_vols`) must produce the same
+  market dict through `market._slice` / `_assemble`; `test_vols_give_the_same_market_as_prices` guards this.
 
 ## Running
 

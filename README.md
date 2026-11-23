@@ -95,6 +95,37 @@ res["model"].local_vol(0.5, x)              # local vol at T = 0.5, x = k / sqrt
 parameters(res)["atmf_vol"], parameters(res)["atm_skew"]
 ```
 
+### Starting from implied vols
+
+If you already have implied vols (from your own pricer, a vendor, or another market), skip the price step. Give
+one dict per expiry with the time to expiry, the strikes and forward (or `k = ln(K/F)` directly), and bid and
+ask vols. All the fitting steps after that are the same as from prices.
+
+```python
+from volsurf import Config, fit_vols
+res = fit_vols([
+    dict(T=0.0838, strike=[6000, 6100, ...], forward=6712.4, iv_bid=[...], iv_ask=[...], label="2026-12-18"),
+    dict(T=0.1603, k=[-0.31, -0.29, ...], iv_bid=[...], iv_ask=[...]),
+    ...
+], Config())
+```
+
+- Vols are decimals (0.20 = 20%).
+- The forward is needed only when you give strikes rather than `k`.
+- An expiry can be a date (`expiry="2026-12-18"`, with `quote_time=` passed) instead of `T`.
+- With **mid vols only**, pass `iv_mid` and, if you know it, `half_spread`. Without a spread, the likelihood
+  becomes a Gaussian of width `Config.s_noise` (default 0.05 vol pts). Set that to your marking error, because
+  it sets how hard the fit chases each point and therefore how many modes the free energy keeps.
+- Every quote is taken as given: no put–call parity and no out-of-the-money selection. The strike range and
+  the thinning to `n_per_expiry` strikes per expiry still apply.
+
+From a CSV with one row per strike (columns `T` or `expiry`; `strike` + `forward` or `k`; `iv_bid` + `iv_ask`
+or `iv_mid` [+ `half_spread`]; optional `label`, `root`, `discount`):
+
+```bash
+PYTHONPATH=src python -m volsurf fit-vols vols.csv --out results/mine [--quote-time 2026-11-19T15:22] [--s-noise 0.001]
+```
+
 The tests are `pytest -q`. Everything in `results/` is rebuilt by `./reproduce.sh` (quick) or
 `./reproduce.sh full`.
 
@@ -102,7 +133,7 @@ The tests are `pytest -q`. Everything in `results/` is rebuilt by `./reproduce.s
 
 | | |
 |---|---|
-| `src/volsurf/` | `market` (Cboe chain → forwards, discounts, vols by put–call parity), `ssvi` (baseline slices), `dupire` (local-variance surface and solver), `modes`, `likelihood`, `fit` (baseline, LM, free energy), `relinearize`, `diagnostics`, `plotting`, `pipeline` |
+| `src/volsurf/` | `market` (Cboe chain → forwards, discounts, vols by put–call parity; or implied vols directly via `build_market_from_vols` / `load_vol_csv`), `ssvi` (baseline slices), `dupire` (local-variance surface and solver), `modes`, `likelihood`, `fit` (baseline, LM, free energy), `relinearize`, `diagnostics`, `plotting`, `pipeline` |
 | `tests/` | unit tests and an end-to-end recovery of a known surface |
 | `exp/` | the numbered studies that produce `results/` |
 | `results/` | outputs for the reference snapshots |
