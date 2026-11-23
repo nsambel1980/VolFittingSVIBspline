@@ -1,0 +1,22 @@
+# market data: Cboe snapshots are not redistributed (see data/README.md)
+data/*.json
+data/*.zip
+
+# local settings
+.env
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
