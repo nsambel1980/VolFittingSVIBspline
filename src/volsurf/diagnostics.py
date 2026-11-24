@@ -51,16 +51,21 @@ def arbitrage(model, x=(-8.0, 6.0)):
     for s in range(model.nT):
         d = density_from_calls(model.cref[s], kg); xs = kg[1:-1] / np.sqrt(model.base.th_i[s])
         dens.append(d[(xs > x[0]) & (xs < x[1])] if np.any((xs > x[0]) & (xs < x[1])) else d)
-    bf, cal, prev = [], [], None
+    bf, cal, prev, where = [], [], None, {}
     for s in range(model.nT):
         c = model.calls(s, kg); atm = float(model.calls(s, np.array([0.0]))[0])
-        sel = (kg / np.sqrt(model.base.th_i[s]) > x[0]) & (kg / np.sqrt(model.base.th_i[s]) < x[1])
+        xs = kg / np.sqrt(model.base.th_i[s]); sel = (xs > x[0]) & (xs < x[1])
         slope = np.diff(c) / np.diff(K)
-        b = np.diff(slope) * np.diff(K)[:-1]                  # = C(K-) - 2C(K) + C(K+) on a uniform strike grid
-        bf.append(float(b[sel[1:-1]].min() / atm))
+        b = np.diff(slope) * np.diff(K)[:-1] / atm            # = C(K-) - 2C(K) + C(K+), relative to the ATM call
+        bs = np.where(sel[1:-1], b, np.inf); j = int(np.argmin(bs)); bf.append(float(bs[j]))
+        if not where or bf[-1] < where["butterfly"][0]:
+            where["butterfly"] = (bf[-1], s, float(kg[j + 1]), float(xs[j + 1]))
         if prev is not None:
-            cal.append(float((c - prev)[sel].min()))
+            d = np.where(sel, c - prev, np.inf); j = int(np.argmin(d)); cal.append(float(d[j]))
+            if "calendar" not in where or cal[-1] < where["calendar"][0]:
+                where["calendar"] = (cal[-1], s, float(kg[j]), float(xs[j]))
         prev = c
+    model.arbitrage_where = {k: dict(value=v[0], expiry=v[1], k=v[2], x=v[3]) for k, v in where.items()}
     return dict(min_density_ratio=float(min(d.min() / max(d.max(), 1e-300) for d in dens)),
                 min_price_change=float(np.min(np.diff(hist, axis=0))),
                 delivered_butterfly=float(min(bf)), delivered_calendar=float(min(cal)) if cal else 0.0,
@@ -123,6 +128,7 @@ def summary(mk, model):
     return dict(inside_all=inside, inside_by_expiry=by, atmf_gap_volpts=gaps[0], skew_change=gaps[1],
                 **price_score(mk, model),
                 **arb, arbitrage_free=arbitrage_ok(arb), arbitrage_failures=arbitrage_failures(arb),
+                arbitrage_worst_at=getattr(model, "arbitrage_where", {}),
                 calendar_ok=bool(ch["calendar_ok"]), local_var_ratio=local_vol_ratio(model), put_wing=put_wing(model),
                 expiry_jumps_volpts=expiry_jumps(model), first_slice_min_coef=float(model.a_ref[:model.n_x].min()),
                 butterfly_ok=bool(ch["butterfly_ok"].all()),
