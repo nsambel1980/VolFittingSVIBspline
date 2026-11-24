@@ -73,9 +73,10 @@ arbitrage penalty on the correction and no check grid in the fit.
 pip install -r requirements.txt
 export PYTHONPATH=src
 pytest -q                                   # ~15 s
-python exp/07_single_name.py --shocks       # the single-name stress harness, ~8 min
+python exp/07_single_name.py --shocks       # the single-name stress harness, ~30 min
 python -m volsurf fit data/SPX_20261119_1522.json --out results/tmp
 ./reproduce.sh                              # quick; ./reproduce.sh full for every study
 ```
 
-A 16-expiry single-name book of 1,270 rows fits in about 2.5 minutes on one core.
+A 16-expiry single-name book of 1,270 rows fits in about 12 minutes on one core; an SPX day (2,750 quotes on
+nine expiries) in 11-17.

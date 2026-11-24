@@ -76,7 +76,7 @@ SPX.
 - **ranking:** within that space, the generalized eigenproblem (AᵀWA) v = κ P₁ v ranks directions by data
   information against a smoothness prior P₁, with squared-exponential correlations of 1.6 sd in strike and 0.7
   in ln T.
-- **how many:** every mode with κ ≥ 10⁻³ is fitted, so the count follows the data (98 on the synthetic single
+- **how many:** every mode with κ ≥ 10⁻³ is fitted, so the count follows the data (101 on the synthetic single
   name).
 
 Two fixed priors, not scaled by τ, keep the correction sane wherever the quotes say little:
@@ -113,13 +113,13 @@ It is fitted on **all rows** and scored with the metrics of an independent compa
 
 | | before the redesign | now |
 |---|---|---|
-| outcome | `LinAlgError` (thinned) / `ValueError` (all rows) after 15–17 min | completes in 2.3 min |
-| price RMS, in half-spreads | — | 0.47 |
-| two-sided quotes outside bid–ask | — | 59 of ~1,030 |
+| outcome | `LinAlgError` (thinned) / `ValueError` (all rows) after 15–17 min | completes in 12 min (one core) |
+| price RMS, in half-spreads | — | 0.35 |
+| two-sided quotes outside bid–ask | — | 10 of ~1,030 |
 | ask-only quotes above the ask | — | 1 |
-| implied-vol error against the truth | — | 0.57 vol pts RMS |
+| implied-vol error against the truth | — | 0.58 vol pts RMS |
 | arbitrage checks (solver and delivered prices) | — | all pass |
-| local-vol move under ±0.1-spread quote shocks | — | 0.8–1.0 (supported) / 5–8 (wings) vol pts |
+| local-vol move under ±0.1-spread quote shocks | — | 0.36–0.46 (supported) / 2.4–2.5 (wings) vol pts |
 
 The crashes were divisions by Black vega, which is about 0 for far out-of-the-money quotes. The model now has
 no implied-vol step in the fit.
