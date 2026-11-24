@@ -63,6 +63,20 @@ def calendar_gaps(q, nT):
     return np.diff(th) / th[:-1], np.diff(dn), np.diff(up)
 
 
+def project_feasible(q, nT, rounds=3):
+    """Exactly feasible parameters: Gatheral-Jacquier butterfly conditions psi (1 + |rho|) <= 3.9 and
+    psi^2 (1 + |rho|) <= 3.9 theta at every expiry (by shrinking |s|; the first slice is the solver's starting
+    density, so a butterfly there would be real arbitrage), then the calendar conditions (project_calendar).
+    Alternated a few times; both steps only shrink skew changes, so they settle at once in practice."""
+    q = np.array(q, float)
+    for _ in range(rounds):
+        th = q[:nT]; psi = psi_law(th, q[2 * nT], q[2 * nT + 1])
+        rmax = np.clip(np.minimum(3.9 / psi, 3.9 * th / psi ** 2) - 1.0, 0.0, 0.999)
+        q[nT:2 * nT] = np.clip(q[nT:2 * nT], -rmax * psi, rmax * psi)
+        q = project_calendar(q, nT)
+    return q
+
+
 def project_calendar(q, nT, margin=CAL_MARGIN):
     """The nearest-in-order feasible parameters: theta increasing (relative margin) and both wing slopes
     psi +- s non-decreasing (|s_i - s_(i-1)| <= psi_i - psi_(i-1) - margin), by one forward pass. The penalty
@@ -89,7 +103,7 @@ def penalty(q, nT):
     r = np.abs(sk / psi)
     cal = sum(np.sum(np.maximum(CAL_MARGIN - g, 0) ** 2) for g in calendar_gaps(q, nT))
     return (np.sum(np.maximum(r - 0.98, 0) ** 2) + np.sum(np.maximum(psi * (1 + r) - 3.9, 0) ** 2)
-            + np.sum(np.maximum(psi ** 2 * (1 + r) - 3.9 * th, 0) ** 2 / th ** 2)) * 1e6 + cal * 1e9
+            + np.sum(np.maximum(psi ** 2 * (1 + r) - 3.9 * th, 0) ** 2 / th ** 2) + cal) * 1e10
 
 
 def _lipschitz_hermite_slopes(S, x):
@@ -152,6 +166,13 @@ class SSVISlices:
         """(theta, psi, rho) at maturity T. At the expiries these are the fitted slices."""
         th = self.theta(T); lo, hi = self.th_i.min(), self.th_i.max()
         psi = float(psi_law(th, self.eta, self.gam))
+        if th < lo:
+            # before the first expiry: rho fixed, psi on the law but capped at the Gatheral-Jacquier bound (the
+            # solver may start here, so these slices must be butterfly-free); the cap ~ sqrt(theta) keeps psi
+            # rising and psi / theta falling, so the calendar conditions still hold
+            r = abs(float(self.rho_i[int(np.argmin(self.th_i))]))
+            psi = min(psi, np.sqrt(3.9 * th / (1 + r)), 3.9 / (1 + r))
+            return th, psi, float(self.rho_i[int(np.argmin(self.th_i))])
         if th <= lo or th >= hi or self.nT == 1 or np.any(np.diff(self._S) <= 0):   # fixed rho
             j = int(np.argmin(self.th_i)) if th <= lo else int(np.argmax(self.th_i)) if th >= hi else \
                 int(np.argmin(np.abs(self.th_i - th)))

@@ -13,7 +13,7 @@ import numpy as np
 from scipy.optimize import minimize, lsq_linear
 from scipy.special import logsumexp
 from .ssvi import SSVISlices, initial_q, bounds, widths, penalty, psi_law, smoothness, unpack, ssvi_w, \
-    project_calendar
+    project_feasible
 from .black import call, vega_w
 from .likelihood import QuoteLikelihood
 from .dupire import LocalVarSurface
@@ -111,7 +111,7 @@ def fit_baseline(mk, cfg, q_init=None, log=None):
     best = min((run(mid, q0) for q0 in starts), key=lambda r: r.fun)
     scan = {}
     for sc in scales:
-        r = run(sc, best.x); q = project_calendar(np.clip(r.x, lo, hi), nT)
+        r = run(sc, best.x); q = project_feasible(np.clip(r.x, lo, hi), nT)
         wd = widths(q, nT)
         H = _hess_from_grad(lambda u: objective(q + u * wd, sc)[1] * wd, np.zeros(len(q)), np.full(len(q), 1e-4))
         sign, ld = np.linalg.slogdet(H)
@@ -185,11 +185,15 @@ def lm_fit(mk, cfg, q, U, c, tau, a_offset=None, prior_matrix=None, log=None, sm
         Xs = np.vstack([np.sqrt(W)[:, None] * X, np.hstack([np.zeros((K, d)), Lc.T]), np.diag(dg)])
         ys = np.r_[np.sqrt(W) * r_lin, -np.linalg.solve(Lc, bvec), dg * np.r_[np.zeros(d), c]]
         th = lsq_linear(Xs, ys).x
-        q_try = project_calendar(np.clip(q + th[:d] * widths(q, nT), lo, hi), nT); c_try = th[d:]
+        q_try = project_feasible(np.clip(q + th[:d] * widths(q, nT), lo, hi), nT); c_try = th[d:]
         trial = build(q_try, c_try); f_new = phi(trial, q_try, c_try)
         if not (np.isfinite(f_new) and f_new < f_cur):
             lam *= 5
+            if log:
+                log(f"    rejected: objective {f_new:.4g} vs {f_cur:.4g}, damping -> {lam:.1e}")
             if lam > 1e7:
+                if log:
+                    log("    stop: damping limit")
                 break
             continue
         gain = (f_cur - f_new) / abs(f_cur); steps += 1
@@ -198,6 +202,8 @@ def lm_fit(mk, cfg, q, U, c, tau, a_offset=None, prior_matrix=None, log=None, sm
             log(f"    step {steps}: -lnL = {lik(cur.c_ref_q):.1f}")
         small = small + 1 if gain < cfg.gain_tol else 0
         if small >= 3:
+            if log:
+                log("    stop: converged")
             break
     return cur, q, c, steps
 

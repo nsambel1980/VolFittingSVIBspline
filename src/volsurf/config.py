@@ -50,7 +50,7 @@ class Config:
     n_modes_max: int = 400
     price_noise: float = 0.25         # noise in the bid/ask likelihood, in half-spreads of each quote
     mid_pull: float = 2.0             # mild pull to the mid: 1/2 ((c - mid) / (mid_pull h))^2; 0 = none
-    tau_grid: tuple = (0.05, 10.0, 18)  # prior-scale grid for the free energy: (min, max, points), log-spaced
+    tau_grid: tuple = (0.05, 1000.0, 30)  # prior-scale grid for the free energy: (min, max, points), log-spaced
     gain_tol: float = 1e-7            # Levenberg-Marquardt stop: relative objective gain below this, 3 times
     max_iter: int = 300
     tau_rounds: int = 4
@@ -68,8 +68,10 @@ class Config:
     wing_anchor: float = 0.25         # prior sd of nu (log local-variance factor) where no quotes are; 0 = off
     support_gap: float = 0.5          # local vol is "supported" where two-sided quotes are at most this far apart (x)
     rannacher: int = 2                # first solver steps taken as implicit half-steps (damps CN oscillations)
-    start: str = "first_slice"        # "first_slice": density correction at T1, solve from T1;
-                                      # "zero": solve from near t = 0, the correction also covers [0, T1]
+    start: str = "zero"               # "zero": solve from near t = 0, the correction also shapes [0, T1]
+                                      # (positivity of local variance guarantees no arbitrage);
+                                      # "first_slice": density correction q0 (1 + B a) at T1 - its factor
+                                      # can turn negative on steep short-dated smiles (seen on SPX)
 
     def with_(self, **kw):
         return replace(self, **kw)
