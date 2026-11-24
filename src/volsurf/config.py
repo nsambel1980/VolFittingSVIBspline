@@ -19,6 +19,7 @@ class Config:
     quote_x_lo: float = -3.5          # quoted range used, in ATM standard deviations
     quote_x_hi: float = 2.0
     n_per_expiry: int = 36            # strikes per expiry used in the fit (evenly spaced in x)
+    one_sided: bool = True            # keep ask-only / bid-only quotes (as [0, ask] / [bid, inf) in vol)
     parity_band: float = 0.08         # strikes within 8% of spot for the put-call-parity regression
 
     # --- zeroth order: SSVI slices
@@ -48,6 +49,10 @@ class Config:
     k_lo: float = -2.2
     k_hi: float = 1.6
     steps_per_interval: int = 40
+    support_gap: float = 0.5          # local vol is "supported" where two-sided quotes are at most this far apart (x)
+    rannacher: int = 2                # first solver steps taken as implicit half-steps (damps CN oscillations)
+    start: str = "first_slice"        # "first_slice": density correction at T1, solve from T1;
+                                      # "zero": solve from near t = 0, the correction also covers [0, T1]
 
     def with_(self, **kw):
         return replace(self, **kw)

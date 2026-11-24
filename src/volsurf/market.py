@@ -82,13 +82,19 @@ def build_market_from_rows(rows, spot, quote_time, cfg):
         Ks, cmid, cbid, cask = [], [], [], []
         for K in sorted(set(calls) | set(puts)):
             b, a = (puts if K < F else calls).get(K, (0.0, 0.0))
-            if b <= 0 or a <= b:
+            b = b if b > 0 else 0.0; a = a if a > 0 else np.inf
+            if b == 0.0 and not np.isfinite(a) or a <= b or (b == 0.0 and not cfg.one_sided) \
+                    or (not np.isfinite(a) and not cfg.one_sided):
                 continue
             off = 0.0 if K >= F else 1.0 - K / F          # put -> call by parity (normalized)
             Ks.append(K); cbid.append(b / (D * F) + off); cask.append(a / (D * F) + off)
-            cmid.append(0.5 * (a + b) / (D * F) + off)
+            cmid.append(0.5 * (a + b) / (D * F) + off if np.isfinite(a) and b > 0 else np.nan)
         Ks = np.array(Ks); k = np.log(Ks / F)
-        w_m, w_b, w_a = (implied_w(k, np.array(c)) for c in (cmid, cbid, cask))
+        cb, ca, cm = (np.array(c) for c in (cbid, cask, cmid))
+        intrinsic = np.maximum(1 - np.exp(k), 0.0)
+        w_b = np.where(cb > intrinsic + 1e-12, implied_w(k, np.maximum(cb, intrinsic + 1e-12)), 0.0)  # no bid: 0
+        w_a = np.where(np.isfinite(ca), implied_w(k, np.where(np.isfinite(ca), ca, 0.5)), np.inf)  # no ask: inf
+        w_m = np.where(np.isfinite(cm), implied_w(k, np.where(np.isfinite(cm), cm, 0.5)), np.nan)
         sl = _slice(k, w_b, w_m, w_a, T, cfg, K=Ks)
         slices.append(sl)
         info.append(dict(label=f"20{ymd[:2]}-{ymd[2:4]}-{ymd[4:]}", root=root, ymd=ymd, T=T, F=F, D=D,
@@ -98,26 +104,35 @@ def build_market_from_rows(rows, spot, quote_time, cfg):
 
 
 def _slice(k, w_b, w_m, w_a, T, cfg, K=None):
-    """One expiry: ATM variance, strikes in range, and the n_per_expiry strikes used in the fit."""
+    """One expiry: ATM variance, strikes in range, and the n_per_expiry strikes used in the fit.
+    One-sided quotes: w_b = 0 (ask only) or w_a = inf (bid only), w_m = nan. Two-sided quotes set the ATM
+    variance; in the thinning a one-sided quote is used only where no two-sided one is close to the target."""
     o = np.argsort(k); k, w_b, w_m, w_a = k[o], w_b[o], w_m[o], w_a[o]
     K = np.exp(k) if K is None else np.asarray(K, float)[o]
-    th = float(np.interp(0.0, k, w_m))
-    if not (k[0] < 0 < k[-1]):
-        raise ValueError(f"expiry T={T:.4f}: quotes must bracket the forward (k from {k[0]:.3f} to {k[-1]:.3f})")
+    two = (w_b > 1e-9) & np.isfinite(w_a) & np.isfinite(w_m)
+    if two.sum() < 2 or not (k[two][0] < 0 < k[two][-1]):
+        raise ValueError(f"expiry T={T:.4f}: two-sided quotes must bracket the forward")
+    th = float(np.interp(0.0, k[two], w_m[two]))
     x = k / np.sqrt(th)
-    ok = (x >= cfg.quote_x_lo) & (x <= cfg.quote_x_hi) & (w_b > 1e-9) & (w_a > w_b)
-    full = dict(k=k[ok], x=x[ok], K=K[ok], iv_bid=np.sqrt(w_b[ok] / T), iv_ask=np.sqrt(w_a[ok] / T),
-                iv_mid=np.sqrt(w_m[ok] / T))
+    ok = (x >= cfg.quote_x_lo) & (x <= cfg.quote_x_hi) & (w_a > w_b) & (w_b >= 0) & (two | (w_b > 0) | np.isfinite(w_a))
+    if not cfg.one_sided:
+        ok &= two
+    with np.errstate(invalid="ignore", divide="ignore"):
+        full = dict(k=k[ok], x=x[ok], K=K[ok], iv_bid=np.sqrt(w_b[ok] / T), iv_ask=np.sqrt(w_a[ok] / T),
+                    iv_mid=np.sqrt(w_m[ok] / T), one_sided=~two[ok])
     cand = np.where(ok)[0]
     targets = np.linspace(cfg.quote_x_lo, cfg.quote_x_hi, cfg.n_per_expiry)
-    pick = np.array(sorted(set(cand[np.argmin(np.abs(x[cand][None, :] - targets[:, None]), axis=1)])))
+    gap = (cfg.quote_x_hi - cfg.quote_x_lo) / max(cfg.n_per_expiry - 1, 1)
+    cost = np.abs(x[cand][None, :] - targets[:, None]) + 0.5 * gap * (~two[cand])[None, :]
+    pick = np.array(sorted(set(cand[np.argmin(cost, axis=1)])))
     full["used"] = np.isin(full["k"], k[pick])
-    return dict(T=T, theta=th, full=full, pick=pick, k=k[pick], w_m=w_m[pick], w_b=w_b[pick], w_a=w_a[pick])
+    z = np.where(two[pick], w_m[pick], np.where(np.isfinite(w_a[pick]), w_a[pick], w_b[pick]))
+    return dict(T=T, theta=th, full=full, pick=pick, k=k[pick], w_m=z, w_b=w_b[pick], w_a=w_a[pick])
 
 
 def _assemble(slices, info, quote_time, spot):
     cat = lambda key, f=lambda sl, v: v: np.concatenate([f(sl, sl[key]) for sl in slices])
-    vol = lambda sl, w: np.sqrt(w / sl["T"])
+    vol = lambda sl, w: np.sqrt(w / sl["T"])                          # inf stays inf (bid-only)
     return dict(T=np.array([sl["T"] for sl in slices]), k=cat("k"),
                 i=np.concatenate([np.full(len(sl["k"]), s) for s, sl in enumerate(slices)]),
                 z=cat("w_m"), iv=cat("w_m", vol), iv_bid=cat("w_b", vol), iv_ask=cat("w_a", vol), nT=len(slices),
@@ -133,7 +148,8 @@ def build_market_from_vols(expiries, cfg, quote_time=None, spot=None, min_half_s
                              if root == 'SPX', else 16:00)
         k                    log forward-moneyness ln(K/F), or
         strike + forward     strikes and the forward F
-        iv_bid, iv_ask       bid and ask implied vols (decimals: 0.2 = 20%), or
+        iv_bid, iv_ask       bid and ask implied vols (decimals: 0.2 = 20%); NaN or 0 for a missing side
+                             (ask-only / bid-only quotes, used when cfg.one_sided), or
         iv_mid               mid vols only; then half_spread (vol, scalar or per strike) if known, else the
                              spread is treated as ~0 and the likelihood is Gaussian with width cfg.s_noise,
                              so set s_noise to the size of your marking error
@@ -162,9 +178,12 @@ def build_market_from_vols(expiries, cfg, quote_time=None, spot=None, min_half_s
             b, a = m - h, m + h
         else:
             raise ValueError("each expiry needs iv_bid and iv_ask, or iv_mid")
-        if np.nanmedian(m) > 3:
+        if np.nanmedian(np.where(np.isfinite(m), m, np.nan)) > 3:
             raise ValueError("vols look like percentages; pass decimals (0.2 for 20%)")
-        good = np.isfinite(k) & np.isfinite(b) & np.isfinite(a) & np.isfinite(m) & (b > 0) & (a > b)
+        b = np.where(np.isfinite(b) & (b > 0), b, 0.0)                 # missing bid: ask-only
+        a = np.where(np.isfinite(a) & (a > 0), a, np.inf)               # missing ask: bid-only
+        m = np.where((b > 0) & np.isfinite(a), m, np.nan)
+        good = np.isfinite(k) & (a > b) & ((b > 0) | np.isfinite(a))
         sl = _slice(k[good], b[good] ** 2 * T, m[good] ** 2 * T, a[good] ** 2 * T, T, cfg,
                     K=None if K is None else K[good])
         slices.append(sl)

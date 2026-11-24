@@ -16,4 +16,5 @@ if [ "${1:-quick}" = "full" ]; then
   python exp/02_stability.py
   python exp/03_n_modes.py
   python exp/04_coordinates.py
+  python exp/06_prior_length.py
 fi

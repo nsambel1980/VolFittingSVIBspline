@@ -12,13 +12,44 @@ def coverage(mk, model):
     return float(np.concatenate(per).mean()), [float(p.mean()) for p in per]
 
 
-def arbitrage(model):
-    """Butterfly: smallest density / peak density over the expiries (negative = violation, ~1e-10 is rounding).
-    Calendar: smallest change of any call price over any time step of the solver (negative = violation)."""
+def arbitrage(model, x=(-8.0, 6.0)):
+    """Static-arbitrage checks, on the solver grid and on the delivered surface (what iv_exact returns).
+
+    min_density_ratio      solver prices: smallest density / peak density (negative = butterfly; ~1e-10 rounding)
+    min_price_change       solver prices: smallest change of any call over any time step (negative = calendar)
+    delivered_butterfly    delivered calls: smallest butterfly C(K-) - 2C(K) + C(K+) on the solver's strike grid,
+                           x = k / sqrt(theta) in `x`, normalized by C(F); in strike K, not log-strike
+    delivered_calendar     delivered calls: smallest C(T_{i+1}, k) - C(T_i, k) at the same k (normalized)
+    baseline_calendar      SSVI baseline: smallest increase of total variance between neighbouring maturities
+                           on a fine grid out to |x| = 10 (negative = the baseline itself has calendar arbitrage)
+    baseline_floored       share of solver nodes where the baseline local variance had to be floored
+    """
     _, hist = model.full_solve(model.a_ref, all_steps=True)
     dens = [density_from_calls(model.cref[s], model.kg) for s in range(model.nT)]
+    kg, K = model.kg, np.exp(model.kg)
+    bf, cal, prev = [], [], None
+    for s in range(model.nT):
+        c = model.calls(s, kg); atm = float(model.calls(s, np.array([0.0]))[0])
+        sel = (kg / np.sqrt(model.base.th_i[s]) > x[0]) & (kg / np.sqrt(model.base.th_i[s]) < x[1])
+        slope = np.diff(c) / np.diff(K)
+        b = np.diff(slope) * np.diff(K)[:-1]                  # = C(K-) - 2C(K) + C(K+) on a uniform strike grid
+        bf.append(float(b[sel[1:-1]].min() / atm))
+        if prev is not None:
+            cal.append(float((c - prev)[sel].min()))
+        prev = c
     return dict(min_density_ratio=float(min(d.min() / d.max() for d in dens)),
-                min_price_change=float(np.min(np.diff(hist, axis=0))))
+                min_price_change=float(np.min(np.diff(hist, axis=0))),
+                delivered_butterfly=float(min(bf)), delivered_calendar=float(min(cal)) if cal else 0.0,
+                baseline_calendar=model.base.calendar_check(), baseline_floored=float(model.frac_floored))
+
+
+ARB_TOL = dict(min_density_ratio=-1e-7, min_price_change=-1e-9, delivered_butterfly=-1e-9,
+               delivered_calendar=-1e-9, baseline_calendar=-1e-10)
+
+
+def arbitrage_ok(arb):
+    """True when every check in `arb` is above its tolerance and no baseline node was floored."""
+    return all(arb[k] >= v for k, v in ARB_TOL.items()) and arb["baseline_floored"] == 0.0
 
 
 def local_vol_ratio(model):
@@ -54,8 +85,9 @@ def summary(mk, model):
     inside, by = coverage(mk, model)
     gaps = gap_summary(model)
     b = model.base; ch = b.checks()
+    arb = arbitrage(model)
     return dict(inside_all=inside, inside_by_expiry=by, atmf_gap_volpts=gaps[0], skew_gap=gaps[1],
-                **arbitrage(model), local_var_ratio=local_vol_ratio(model), put_wing=put_wing(model),
+                **arb, arbitrage_free=arbitrage_ok(arb), calendar_ok=bool(ch["calendar_ok"]), local_var_ratio=local_vol_ratio(model), put_wing=put_wing(model),
                 expiry_jumps_volpts=expiry_jumps(model), first_slice_min_coef=float(model.a_ref[:model.n_x].min()),
                 butterfly_ok=bool(ch["butterfly_ok"].all()),
                 wing_slopes_put=[float(x) for x in ch["wing_slope_put"]],

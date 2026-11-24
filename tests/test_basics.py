@@ -61,11 +61,23 @@ def test_smooth_skew_interpolation_removes_local_vol_jumps():
     def max_jump(kind):
         b = SSVISlices(T_SYN, q, kind); out = []
         for Ti in T_SYN[1:-1]:
-            v = [np.sqrt(b.v0(xs * np.sqrt(b.theta(t)), t)[0]) for t in (Ti * (1 - 2e-3), Ti * (1 + 2e-3))]
+            v = [np.sqrt(b.v0(xs * np.sqrt(b.theta(t)), t)[0]) for t in (Ti * (1 - 5e-4), Ti * (1 + 5e-4))]
             out.append(100 * np.abs(v[1] - v[0]).max())
         return max(out)
-    assert max_jump("pchip") < 0.2
-    assert max_jump("linear") > 5 * max_jump("pchip")
+    assert max_jump("pchip") < 0.2                            # continuous: shrinks with the window
+    assert max_jump("linear") > 20 * max_jump("pchip")
+
+
+def test_baseline_has_no_calendar_arbitrage_between_or_beyond_expiries():
+    from volsurf.ssvi import calendar_gaps
+    q = true_q(); b = SSVISlices(T_SYN, q)
+    assert b.checks()["calendar_ok"]
+    assert b.calendar_check() > -1e-12                       # whole surface, x in [-10, 10], 0.005y to 1.5y
+    # wing slopes that cross between expiries are flagged and penalized
+    bad = q.copy(); bad[5] = -0.3 * bad[5]                   # second expiry: put wing flatter than the first
+    assert not SSVISlices(T_SYN, bad).checks()["calendar_ok"]
+    from volsurf.ssvi import penalty
+    assert penalty(bad, 4) > 1e3 * max(penalty(q, 4), 1e-9)
 
 
 # ---------------------------------------------------------------- likelihood
@@ -149,3 +161,41 @@ def test_mid_vols_only_and_input_checks():
         build_market_from_vols([dict(T=e["T"], k=e["k"][e["k"] < 0], iv_mid=e["iv_mid"][e["k"] < 0])], FAST)
     with pytest.raises(ValueError, match="quote_time"):
         build_market_from_vols([dict(expiry="2027-01-15", k=e["k"], iv_mid=e["iv_mid"])], FAST)
+
+
+# ---------------------------------------------------------------- one-sided quotes
+def test_one_sided_likelihood_is_censored():
+    m = np.array([0.15, 0.2, 0.25, 0.3])
+    f_ask, g_ask, _ = neg_log_lik(m, np.zeros(4), np.full(4, 0.22), 0.0005)        # ask only: [0, ask]
+    f_bid, g_bid, _ = neg_log_lik(m, np.full(4, 0.22), np.full(4, np.inf), 0.0005)  # bid only: [bid, inf)
+    assert np.all(np.isfinite(f_ask)) and np.all(np.isfinite(f_bid))
+    assert f_ask[0] == f_ask[1] and f_ask[3] > f_ask[2] > f_ask[1]                   # flat below the ask
+    assert f_bid[2] == f_bid[3] == 0 and f_bid[0] > f_bid[1] > 0                     # flat above the bid
+
+
+def test_one_sided_quotes_enter_from_prices_and_vols():
+    e = synthetic_quotes(FAST, n_all=40)[0][2]
+    b, a = e["iv_bid"].copy(), e["iv_ask"].copy()
+    wing = np.arange(len(b)) < 6; b[wing] = np.nan                      # deep puts: ask only
+    a[-3:] = np.nan                                                      # far calls: bid only
+    cfg = FAST.with_(n_per_expiry=40)
+    mk = build_market_from_vols([dict(T=e["T"], k=e["k"], iv_bid=b, iv_ask=a)], cfg)
+    f = mk["full"][0]
+    assert f["one_sided"].sum() == 9 and np.all(f["iv_bid"][:6] == 0) and np.all(np.isinf(f["iv_ask"][-3:]))
+    assert np.isclose(mk["theta_atm"][0], np.interp(0, e["k"], e["iv_mid"] ** 2 * e["T"]))
+    off = build_market_from_vols([dict(T=e["T"], k=e["k"], iv_bid=b, iv_ask=a)], cfg.with_(one_sided=False))
+    assert off["full"][0]["one_sided"].sum() == 0 and len(off["full"][0]["k"]) == len(f["k"]) - 9
+    # prices: an ask-only put far out of the money is kept
+    F, D, T = 7000.0, 0.98, 0.5
+    expiry = dt.datetime(2027, 5, 19, 9, 30); quote_time = expiry - dt.timedelta(days=0.5 * 365)
+    th = 0.2 ** 2 * T; wf = lambda k: ssvi_w(k, th, psi_law(th, 1.2, 0.45), -0.7)
+    rows = []
+    for K in np.arange(4000.0, 8400.0, 25.0):
+        k = np.log(K / F); c = D * F * call(k, wf(k)); p = c - D * (F - K)
+        for cp, price in (("C", c), ("P", p)):
+            bid = 0.0 if (cp == "P" and K < 4500) else price * 0.99
+            rows.append(dict(root="SPX", ymd="270519", cp=cp, K=K, bid=bid, ask=price * 1.01 + 0.05))
+    mk = build_market_from_rows(rows, 7050.0, quote_time,
+                                Config(expiries=(("SPX", "270519"),), n_per_expiry=25, quote_x_lo=-6.0))
+    f = mk["full"][0]
+    assert f["one_sided"].sum() == np.sum(f["K"] < 4500) > 0 and np.all(f["iv_bid"][f["K"] < 4500] == 0)

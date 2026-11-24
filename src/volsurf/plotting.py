@@ -26,10 +26,20 @@ def fit_vs_bidask(mk, model, out, title, baseline=None, extra=None):
     nT, T = mk["nT"], mk["T"]
     fig, axs = plt.subplots(nT, 1, figsize=(8.2, 2.2 * nT + 0.9), sharex=True)
     for s, ax in enumerate(np.atleast_1d(axs)):
-        f = mk["full"][s]; mid = f["iv_mid"]; iv = model.iv_exact(s, f["k"])
+        f = mk["full"][s]; iv = model.iv_exact(s, f["k"])
+        one = f.get("one_sided", np.zeros(len(f["k"]), bool))
+        # reference: mid for two-sided quotes, the quoted side for one-sided ones
+        mid = np.where(np.isfinite(f["iv_mid"]), f["iv_mid"], np.where(np.isfinite(f["iv_ask"]), f["iv_ask"], f["iv_bid"]))
         ins = np.mean((iv >= f["iv_bid"]) & (iv <= f["iv_ask"]))
-        ax.fill_between(f["x"], 100 * (f["iv_bid"] - mid), 100 * (f["iv_ask"] - mid), color="#cfcec9", lw=0,
+        lo = np.clip(100 * (f["iv_bid"] - mid), -5, 5); hi = np.clip(100 * (f["iv_ask"] - mid), -5, 5)
+        two = ~one
+        ax.fill_between(f["x"], np.where(two, lo, np.nan), np.where(two, hi, np.nan), color="#cfcec9", lw=0,
                         zorder=2, label="bid–ask range")
+        if one.any():
+            ax.scatter(f["x"][one], np.zeros(one.sum()), marker="v", s=14, color=INK2, zorder=3,
+                       label="one-sided quote (ask ▼ / bid ▲)")
+            bo = one & np.isfinite(f["iv_bid"]) & (f["iv_bid"] > 0)
+            ax.scatter(f["x"][bo], np.zeros(bo.sum()), marker="^", s=14, color=INK2, zorder=3)
         ax.axhline(0, color=INK2, lw=0.6, zorder=3)
         if baseline is not None:
             ax.plot(f["x"], 100 * (np.sqrt(baseline.w0(f["k"], T[s]) / T[s]) - mid), color=ORANGE, zorder=4,
@@ -62,11 +72,14 @@ def localvol_slices(models, labels, out, maturities=(0.1, 0.25, 0.5, 1.0, 2.0)):
     fig, axs = plt.subplots(len(models), 1, figsize=(8.2, 3.7 * len(models)), sharex=True, sharey=True)
     for ax, m, lab in zip(np.atleast_1d(axs), models, labels):
         for t, col in zip(maturities, cols):
-            ax.plot(xs, 100 * m.local_vol(t, xs), color=col, label=names.get(t, f"{t}y"))
+            lv = 100 * m.local_vol(t, xs); sup = m.supported(t, xs)
+            ax.plot(xs, np.where(sup, lv, np.nan), color=col, label=names.get(t, f"{t}y"))
+            ax.plot(xs, np.where(sup, np.nan, lv), color=col, lw=1.0, ls=(0, (2, 2)))
         ax.set_title(lab, loc="left"); ax.set_ylabel("local vol (%)")
     np.atleast_1d(axs)[-1].set_xlabel("k / √θ  (ATM std devs)")
     np.atleast_1d(axs)[0].legend(fontsize=9.5, loc="upper right")
-    fig.suptitle("Local volatility at fixed maturities", x=0.02, ha="left", fontsize=12.5, color=INK)
+    fig.suptitle("Local volatility at fixed maturities (dashed: not supported by quotes)", x=0.02, ha="left",
+                 fontsize=12.5, color=INK)
     fig.tight_layout(); fig.savefig(out, dpi=150); plt.close(fig)
 
 

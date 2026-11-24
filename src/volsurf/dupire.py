@@ -35,15 +35,29 @@ def apply_op(bands, C):
     return out
 
 
-def cn_step(C, bands0, bands1, dt, S0=None, S1=None, bc=None):
-    rhs = C + 0.5 * dt * apply_op(bands0, C)
+def theta_step(C, bands0, bands1, dt, th=0.5, S0=None, S1=None, bc=None):
+    """One theta-scheme step of dC/dT = L C + S: th = 1/2 Crank-Nicolson, th = 1 implicit Euler."""
+    rhs = C + (1 - th) * dt * apply_op(bands0, C) if th < 1 else C.copy()
     if S0 is not None:
-        rhs += 0.5 * dt * (S0 + S1)
+        rhs += dt * ((1 - th) * S0 + th * S1)
     lo, di, up = bands1
     ab = np.zeros((3, len(di)))
-    ab[0, 1:] = -0.5 * dt * up[:-1]; ab[1] = 1 - 0.5 * dt * di; ab[2, :-1] = -0.5 * dt * lo[1:]
+    ab[0, 1:] = -th * dt * up[:-1]; ab[1] = 1 - th * dt * di; ab[2, :-1] = -th * dt * lo[1:]
     rhs[0] = 0.0 if bc is None else bc[0]; rhs[-1] = 0.0 if bc is None else bc[1]
     return solve_banded((1, 1), ab, rhs)
+
+
+def cn_step(C, bands0, bands1, dt, S0=None, S1=None, bc=None):
+    return theta_step(C, bands0, bands1, dt, 0.5, S0, S1, bc)
+
+
+def step(n, C, bands0, bands1, dt, n_implicit, S0=None, S1=None, bc=None):
+    """Step n of the solve: the first n_implicit steps are two implicit half-steps each (Rannacher), which damp
+    the high-frequency modes Crank-Nicolson keeps; the rest are Crank-Nicolson."""
+    if n < n_implicit:
+        C = theta_step(C, bands1, bands1, 0.5 * dt, 1.0, S1, S1, bc)
+        return theta_step(C, bands1, bands1, 0.5 * dt, 1.0, S1, S1, bc)
+    return theta_step(C, bands0, bands1, dt, 0.5, S0, S1, bc)
 
 
 def _se(n, ell):
@@ -65,8 +79,13 @@ class LocalVarSurface:
             a = U @ self.c_ref              # with an explicit a (offset + U c), keep it
         self.a_ref = None if a is None else np.asarray(a, float)
         self.kg = np.arange(cfg.k_lo, cfg.k_hi + cfg.dk / 2, cfg.dk); self.dk = cfg.dk
-        self.tg = np.unique(np.concatenate([np.geomspace(self.Tn[i], self.Tn[i + 1], cfg.steps_per_interval + 1)
-                                            for i in range(self.nT - 1)]))
+        self.zero_start = cfg.start == "zero"
+        if cfg.start not in ("zero", "first_slice"):
+            raise ValueError(f"start must be 'zero' or 'first_slice', not {cfg.start!r}")
+        self.t_start = self._start_time() if self.zero_start else float(self.Tn[0])
+        knots = ([self.t_start] if self.zero_start else []) + list(self.Tn)
+        self.tg = np.unique(np.concatenate([np.geomspace(knots[i], knots[i + 1], cfg.steps_per_interval + 1)
+                                            for i in range(len(knots) - 1)]))
         self.iexp = [int(np.argmin(np.abs(self.tg - t))) for t in self.Tn]
         self.n_x, self.n_t = cfg.n_x, cfg.n_t
         self.Dnu = cfg.n_x * cfg.n_t; self.D = cfg.n_x + self.Dnu
@@ -85,7 +104,22 @@ class LocalVarSurface:
         return full_bspline_basis(self.tx, warp(x, self.cfg.warp))
 
     def Bt(self, T):
+        # before the first expiry (zero start) the correction keeps its first-expiry shape in x = k / sqrt(theta)
+        T = max(float(T), float(self.Tn[0])) if self.zero_start else T
         return clamped_basis(self.tu, self.tcoord(T), self.n_t)[0]
+
+    def _start_time(self):
+        """Zero start: the solve begins at t_start, where the baseline's ATM standard deviation sqrt(theta) spans
+        ~12 grid steps (so the smile is resolved), at most a quarter of the first expiry. Before t_start the local
+        variance is the baseline's; the time is short and the payoff is close to its intrinsic value."""
+        T1 = float(self.Tn[0]); target = (12 * self.cfg.dk) ** 2
+        if self.base.theta(T1 / 4) <= target:
+            return T1 / 4
+        lo, hi = T1 / 4000, T1 / 4
+        for _ in range(60):
+            mid = np.sqrt(lo * hi)
+            lo, hi = (mid, hi) if self.base.theta(mid) < target else (lo, mid)
+        return hi
 
     def nu_basis(self, T, k=None):
         k = self.kg if k is None else k
@@ -125,6 +159,9 @@ class LocalVarSurface:
         Q1 = cumulative_trapezoid(Q[::-1], -kg[::-1], axis=0, initial=0)[::-1]
         Q2 = cumulative_trapezoid((np.exp(kg)[:, None] * Q)[::-1], -kg[::-1], axis=0, initial=0)[::-1]
         self.ICm = Q2 - np.exp(kg)[:, None] * Q1
+        if self.zero_start:                       # no first-slice density correction: its coefficients are pinned
+            self.ICm = np.zeros_like(self.ICm)
+            return np.eye(self.n_x)
         E = np.vstack([Q1[0], Q2[0]])
         return E / np.linalg.norm(E, axis=1, keepdims=True)
 
@@ -163,7 +200,8 @@ class LocalVarSurface:
         bc_lin = (proj(np.r_[self.ICm[0], np.zeros(self.Dnu)][None, :])[0], np.zeros(C.shape[1]))
         for n in range(len(tg) - 1):
             S_next = proj(np.hstack([zer, self.nu_basis(tg[n + 1]) * src[n + 1][:, None]]))
-            C = cn_step(C, self.bands[n], self.bands[n + 1], tg[n + 1] - tg[n], S_prev, S_next, bc=bc_lin)
+            C = step(n, C, self.bands[n], self.bands[n + 1], tg[n + 1] - tg[n], self.cfg.rannacher, S_prev, S_next,
+                     bc=bc_lin)
             S_prev = S_next
             if n + 1 in self.iexp:
                 self.Phi[self.iexp.index(n + 1)] = C.copy()
@@ -197,7 +235,7 @@ class LocalVarSurface:
         bn = bands_at(0)
         for n in range(len(tg) - 1):
             bn1 = bands_at(n + 1)
-            C = cn_step(C, bn, bn1, tg[n + 1] - tg[n], bc=bc(tg[n + 1])); bn = bn1
+            C = step(n, C, bn, bn1, tg[n + 1] - tg[n], self.cfg.rannacher, bc=bc(tg[n + 1])); bn = bn1
             if n + 1 in self.iexp:
                 out[self.iexp.index(n + 1)] = C[:, 0].copy()
             if all_steps:
@@ -210,15 +248,46 @@ class LocalVarSurface:
         w0 = self.base.w0(k, self.Tn[s])
         return implied_w(k, call(k, w0) + self.interp(self.cref[s] - self.c0n[s], k))
 
+    def calls(self, s, k):
+        """Normalized call prices C/(D F) of the delivered surface at expiry s: the analytic baseline plus the
+        solver's correction (cref - c0n), which cancels most of the discretization error."""
+        k = np.asarray(k, float)
+        return call(k, self.base.w0(k, self.Tn[s])) + self.interp(self.cref[s] - self.c0n[s], k)
+
     def iv_exact(self, s, k):
         return np.sqrt(self.w_exact(s, k) / self.Tn[s])
 
     def local_vol(self, T, x):
-        """Local volatility at maturity T (a time-grid node is used) and standardized moneyness x."""
-        n = int(np.argmin(np.abs(self.tg - T))); t = self.tg[n]
-        k = np.asarray(x) * np.sqrt(self.base.theta(t))
-        v = self.v0g[n] * np.exp(np.clip(self.nu_basis(t) @ self.a_ref[self.n_x:], -30, 30))
-        return np.sqrt(np.interp(k, self.kg, v))
+        """Local volatility at maturity T and standardized moneyness x = k / sqrt(theta(T)), evaluated at T itself
+        (not snapped to the solver's time grid). Before the solve starts (the first expiry, or t_start with a zero
+        start) it is the baseline's local volatility: see `supported` for where it is fitted to quotes."""
+        T = float(T); k = np.asarray(x, float) * np.sqrt(self.base.theta(T))
+        v0, _ = self.base.v0(self.kg, T)
+        v = np.interp(k, self.kg, v0)
+        if T >= self.t_start - 1e-12:
+            v = v * np.exp(np.clip(self.nu_basis(T, k) @ self.a_ref[self.n_x:], -30, 30))
+        return np.sqrt(v)
+
+    def supported(self, T, x, max_gap=None):
+        """True where local vol at (T, x = k / sqrt(theta(T))) is constrained by quotes: T between the first and
+        last expiry, and at both neighbouring expiries x lies inside the quoted strikes with no gap between
+        neighbouring two-sided quotes wider than max_gap (in x units; default cfg.support_gap). Elsewhere the
+        local vol comes from the baseline extrapolation and the prior, not from data."""
+        max_gap = self.cfg.support_gap if max_gap is None else max_gap
+        x = np.atleast_1d(np.asarray(x, float)); T = float(T)
+        if not (self.Tn[0] - 1e-12 <= T <= self.Tn[-1] + 1e-12) or "full" not in self.mk:
+            return np.zeros(len(x), bool)
+        j = int(np.clip(np.searchsorted(self.Tn, T) - 1, 0, self.nT - 2)) if self.nT > 1 else 0
+        out = np.ones(len(x), bool)
+        for s in sorted({j, min(j + 1, self.nT - 1)}):
+            f = self.mk["full"][s]
+            two = ~f.get("one_sided", np.zeros(len(f["k"]), bool))
+            xs = np.sort(f["k"][two] / np.sqrt(self.base.th_i[s]))
+            if len(xs) < 2:
+                return np.zeros(len(x), bool)
+            i = np.clip(np.searchsorted(xs, x), 1, len(xs) - 1)
+            out &= (x >= xs[0]) & (x <= xs[-1]) & (xs[i] - xs[i - 1] <= max_gap)
+        return out
 
     def densities(self):
         """Risk-neutral densities of the exact surface at each expiry (interior grid points)."""
