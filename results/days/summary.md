@@ -1,5 +1,5 @@
-| day | free energy | inside bid-ask | ATMF gap (vol pts) | skew gap | min density / max | min price change | max expiry jump (vol pts) | minutes |
-|---|---|---|---|---|---|---|---|---|
-| 20261113 | -1742.5 | 100.0% | 0.014 | 5.8e-04 | -1.9e-09 | -3.6e-13 | 0.08 | 11.5 |
-| 20261117 | -1725.6 | 99.9% | 0.014 | 2.6e-04 | 8.5e-35 | -4.2e-13 | 0.09 | 8.9 |
-| 20261119 | -1784.0 | 98.3% | 0.012 | 2.9e-04 | 2.3e-30 | -3.3e-13 | 0.07 | 26.3 |
+| day | quotes | modes | inside bid-ask | price RMS (half-spreads) | band misses | ask breaches | ATMF gap (vol pts) | arbitrage-free | max expiry jump (vol pts) | minutes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 20261113 | 2750 | 137 | 89.5% | 0.91 | 264 | 0 | 0.158 | yes | 0.07 | 16.9 |
+| 20261117 | 2750 | 137 | 91.2% | 0.82 | 226 | 0 | 0.184 | yes | 2.91 | 16.2 |
+| 20261119 | 2768 | 144 | 92.3% | 0.90 | 198 | 0 | 0.108 | yes | 3.13 | 10.6 |

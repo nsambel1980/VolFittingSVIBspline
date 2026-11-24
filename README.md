@@ -61,10 +61,14 @@ uses:
 - **time steps:** as many per expiry interval as the growth of ln θ needs;
 - **scheme:** Crank–Nicolson with a Rannacher start.
 
-The first expiry is a density correction q₀(1 + Σ aₘBₘ), with mass and forward conserved exactly for any
-coefficients. Since v > 0, the surface has **no calendar or butterfly arbitrage for any coefficients**. The
-prices handed out are the solver's own, interpolated linearly in strike, so what passes the arbitrage checks is
-exactly what is delivered.
+The solve starts near t = 0 from a butterfly-free SSVI slice, so the correction also shapes local vol before
+the first expiry. That is the local vol a path-dependent pricer needs. Since v > 0, the surface has **no
+calendar or butterfly arbitrage for any coefficients**. The prices handed out are the solver's own,
+interpolated linearly in strike, so what passes the arbitrage checks is exactly what is delivered.
+
+An alternative start (`start="first_slice"`) corrects the first expiry's density directly. It conserves mass
+and forward exactly, but its factor 1 + Σ aₘBₘ can turn negative on steep short-dated smiles, as it did on
+SPX.
 
 **Modes.** The coefficients are a = V c:
 - **constraint:** V lies in the null space of "ATMF level unchanged at every expiry". The skew is free, and
@@ -75,8 +79,11 @@ exactly what is delivered.
 - **how many:** every mode with κ ≥ 10⁻³ is fitted, so the count follows the data (98 on the synthetic single
   name).
 
-A **wing anchor** is a fixed prior that ties ν toward 0 where no quotes are. It stops the freedom the core needs
-from leaking into unobserved wings.
+Two fixed priors, not scaled by τ, keep the correction sane wherever the quotes say little:
+- **amplitude:** every coefficient has sd 1.5, so local variance is never multiplied by more than about 20×;
+- **wing anchor:** coefficients where no quotes are have sd 0.25.
+
+Without them, on SPX, cent-priced deep-wing quotes let ν reach 26.
 
 **Likelihood and evidence.** Each quote is an interval in normalized price:
 - **two-sided:** [bid, ask];
@@ -88,7 +95,8 @@ edge of the spread). The prior on a is ½aᵀP₁a/τ² plus the anchor. Levenbe
 surface. τ, the term-structure scale and the configuration choices are all made by the Laplace free energy.
 
 **Relinearization.** One round projects the solution back onto the exact ATMF levels, recomputes the modes there
-and refits.
+and refits. When the correction is large the first-order projection can cost more fit than it gains. A round
+that worsens −ln L by more than 50 is then rejected, and the fit's ATMF gap is reported instead.
 
 ## Results
 
@@ -124,11 +132,29 @@ Results: [`results/single_name/`](results/single_name/).
 
 ### SPX
 
-Three Cboe snapshots (13, 17 and 19 Nov 2026), nine monthly expiries from Dec 2026 to Dec 2028, every quote
-on them (`volsurf.config.SPX_STUDY`). The table is in [`results/days/summary.md`](results/days/summary.md);
-each day's parameters, checks and figures are in `results/days/<YYYYMMDD>/`.
+Three Cboe snapshots (13, 17 and 19 Nov 2026), nine monthly expiries from Dec 2026 to Dec 2028, **every quote**
+on them (`volsurf.config.SPX_STUDY`): about 2,750 rows per day. Each day's parameters, checks and figures are in
+`results/days/<YYYYMMDD>/`.
 
-*The SPX results in `results/days/` are from the previous revision and are being regenerated with this one.*
+| | 13 Nov | 17 Nov | 19 Nov |
+|---|---|---|---|
+| quotes | 2,750 | 2,750 | 2,768 |
+| inside bid–ask | 89.5% | 91.2% | 92.3% |
+| price RMS (half-spreads) | 0.91 | 0.82 | 0.90 |
+| arbitrage checks | pass | pass | pass |
+| ATMF gap (relinearization rejected) | 0.16 | 0.18 | 0.11 vol pts |
+| minutes on one core | 17 | 16 | 11 |
+
+The earlier revision reported 98–100% inside bid–ask, but on 36 strikes per expiry within −3.5 to +2 sd. These
+fits use every quote, including deep wings priced in cents.
+
+**Known weaknesses:**
+- **Rough short-dated put wing.** On 17 and 19 Nov, local vol between −3 and −1 sd in the first months is bumpy,
+  with spikes to about 85%. The evidence chooses a very weak smoothness prior (τ of 360 to 1,000) to fit
+  thousands of tight-spread quotes. The surface is arbitrage-free, but it is not yet smooth enough for
+  path-dependent pricing there.
+- **ATMF is not exact.** The surface's ATMF vol misses the parameter θ by up to 0.18 vol points, because
+  relinearization was rejected on all three days.
 
 ![fit](results/days/20261119/fit_vs_bidask.png)
 ![local vol](results/days/localvol_3d.png)
