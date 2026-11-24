@@ -57,9 +57,19 @@ def relinearize(mk, cfg, fit, log=None):
         _, C, E = gaps_and_rows(model)
         Up, _ = rank_modes(model, np.vstack([C[:model.nT], E]), lik)
         Up = Up[:, :K]
-        cur, q, cp, steps = lm_fit(mk, cfg, q, Up, np.zeros(K), tau, a_offset=a.copy(), prior_matrix=P1, log=log,
-                                   smooth=smooth)
-        a = a + Up @ cp
-        model = LocalVarSurface(mk, baseline(mk, q, cfg), cfg, a=a)
+        cur, q2, cp, steps = lm_fit(mk, cfg, q, Up, np.zeros(K), tau, a_offset=a.copy(), prior_matrix=P1, log=log,
+                                    smooth=smooth)
+        a2 = a + Up @ cp
+        model2 = LocalVarSurface(mk, baseline(mk, q2, cfg), cfg, a=a2)
+        worse = lik(model2.c_ref_q) - history[0]["nll"]
+        if worse > cfg.relin_max_cost:
+            # the first-order projection failed (large, nonlinear corrections): keep the fit, report its gap
+            history.append(dict(stage=f"round {rnd + 1} rejected", gaps=gap_summary(model2), nll=lik(model2.c_ref_q),
+                                steps=steps))
+            a, q = fit["a"].copy(), fit["q"].copy()
+            model = LocalVarSurface(mk, baseline(mk, q, cfg), cfg, a=a)
+            history.append(dict(stage="kept fit", gaps=gap_summary(model), nll=lik(model.c_ref_q)))
+            break
+        a, q, model = a2, q2, model2
         history.append(dict(stage=f"round {rnd + 1}", gaps=gap_summary(model), nll=lik(model.c_ref_q), steps=steps))
     return dict(q=q, a=a, tau=tau, model=model, history=history)

@@ -55,6 +55,7 @@ class Config:
     max_iter: int = 300
     tau_rounds: int = 4
     relin_rounds: int = 1
+    relin_max_cost: float = 50.0      # reject a relinearization round that worsens -ln L by more than this
 
     # --- Dupire grid
     n_grid: int = 700                 # log-strike nodes, k = A sinh(xi) with A = grid_core * first ATM sd
@@ -65,6 +66,7 @@ class Config:
     steps_per_lntheta: float = 30.0   # time steps per unit growth of ln theta in each expiry interval
     min_steps: int = 6
     steps_per_interval: int = 40      # at most
+    nu_amplitude: float = 1.5         # prior sd of every correction coefficient (fixed, not scaled by tau)
     wing_anchor: float = 0.25         # prior sd of nu (log local-variance factor) where no quotes are; 0 = off
     support_gap: float = 0.5          # local vol is "supported" where two-sided quotes are at most this far apart (x)
     rannacher: int = 2                # first solver steps taken as implicit half-steps (damps CN oscillations)

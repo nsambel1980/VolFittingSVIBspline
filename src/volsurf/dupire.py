@@ -217,14 +217,17 @@ class LocalVarSurface:
         return 0.5 * (P + P.T)
 
     def _anchor(self):
-        """Wing anchor: a fixed Gaussian prior, NOT scaled by tau, on the coefficients of splines that lie where no
-        quotes are. Q = diag(f_j) / sigma_w^2, f_j = share of spline j's weight outside the supported region
+        """Fixed priors, NOT scaled by tau. (1) Amplitude: every coefficient ~ N(0, nu_amplitude^2), so local
+        variance is not multiplied by more than ~exp(2 nu_amplitude) anywhere, whatever freedom tau gives the
+        core (on SPX, cent-priced deep-wing quotes let nu reach 26 without it). (2) Wing anchor: on the
+        coefficients of splines that lie where no quotes are. Q = diag(f_j) / sigma_w^2, f_j = share of spline j's weight outside the supported region
         (see `supported`). The smoothness prior P1 / tau^2 lets tau grow when the core needs freedom; without the
         anchor that freedom leaks into the unobserved wings, where exp(nu) is unbounded."""
         cfg = self.cfg; D = self.D
         sig = getattr(cfg, "wing_anchor", 0.0)
+        amp = np.eye(D) / cfg.nu_amplitude ** 2 if cfg.nu_amplitude else np.zeros((D, D))
         if not sig or "full" not in self.mk:
-            return np.zeros((D, D))
+            return amp
         xs = np.linspace(self.x_lo, self.x_hi, 173)
         ts = np.geomspace(self.Tn[0], self.Tn[-1], 41) if self.nT > 1 else self.Tn[:1]
         Bx = self.Bx(xs)
@@ -237,7 +240,7 @@ class LocalVarSurface:
             num += np.outer((Bx * u[:, None]).sum(0), bt); den += np.outer(Bx.sum(0), bt)
         f[self.n_x:] = (num / np.maximum(den, 1e-12)).reshape(-1)
         self.unsupported_share = f
-        return np.diag(f) / sig ** 2
+        return np.diag(f) / sig ** 2 + amp
 
     # ---------------------------------------------------------------- helpers
     def _Dc(self, c):
