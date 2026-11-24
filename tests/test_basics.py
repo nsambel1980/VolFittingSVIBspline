@@ -56,7 +56,10 @@ def test_ssvi_atm_level_and_skew_are_the_parameters():
 
 
 def test_smooth_skew_interpolation_removes_local_vol_jumps():
-    q = true_q(); q[4:8] *= np.array([1.0, 1.3, 0.9, 1.2])   # uneven skew term structure
+    from volsurf.ssvi import project_calendar
+    q = true_q(); q[4:8] *= np.array([1.0, 1.1, 0.95, 1.05])  # uneven skew term structure, within the
+    q = project_calendar(q, 4)                                # calendar conditions (at their limit the skew
+                                                              # path must kink: a real feature, not smoothing)
     xs = np.linspace(-2, 1.5, 51)
     def max_jump(kind):
         b = SSVISlices(T_SYN, q, kind); out = []

@@ -34,7 +34,9 @@ def price_score(mk, model):
 def arbitrage(model, x=(-8.0, 6.0)):
     """Static-arbitrage checks, on the solver grid and on the delivered surface (what iv_exact returns).
 
-    min_density_ratio      solver prices: smallest density / peak density (negative = butterfly; ~1e-10 rounding)
+    min_density_ratio      solver prices: smallest density / peak density within x in `x` (negative = butterfly).
+                           The grid edges lie >= 12 sd of the last expiry out; next to them the fixed boundary
+                           leaves a thin numerical layer, which is outside this region and never quoted.
     min_price_change       solver prices: smallest change of any call over any time step (negative = calendar)
     delivered_butterfly    delivered calls: smallest butterfly C(K-) - 2C(K) + C(K+) on the solver's strike grid,
                            x = k / sqrt(theta) in `x`, normalized by C(F); in strike K, not log-strike
@@ -44,8 +46,11 @@ def arbitrage(model, x=(-8.0, 6.0)):
     baseline_floored       share of solver nodes where the baseline local variance had to be floored
     """
     _, hist = model.full_solve(model.a_ref, all_steps=True)
-    dens = [density_from_calls(model.cref[s], model.kg) for s in range(model.nT)]
     kg, K = model.kg, np.exp(model.kg)
+    dens = []
+    for s in range(model.nT):
+        d = density_from_calls(model.cref[s], kg); xs = kg[1:-1] / np.sqrt(model.base.th_i[s])
+        dens.append(d[(xs > x[0]) & (xs < x[1])] if np.any((xs > x[0]) & (xs < x[1])) else d)
     bf, cal, prev = [], [], None
     for s in range(model.nT):
         c = model.calls(s, kg); atm = float(model.calls(s, np.array([0.0]))[0])
@@ -56,7 +61,7 @@ def arbitrage(model, x=(-8.0, 6.0)):
         if prev is not None:
             cal.append(float((c - prev)[sel].min()))
         prev = c
-    return dict(min_density_ratio=float(min(d.min() / d.max() for d in dens)),
+    return dict(min_density_ratio=float(min(d.min() / max(d.max(), 1e-300) for d in dens)),
                 min_price_change=float(np.min(np.diff(hist, axis=0))),
                 delivered_butterfly=float(min(bf)), delivered_calendar=float(min(cal)) if cal else 0.0,
                 baseline_calendar=model.base.calendar_check(), baseline_floored=float(model.frac_floored))

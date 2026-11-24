@@ -3,7 +3,7 @@
   v(k, T)  = v0(k, T) exp(nu(u, t)),   nu = sum_mn a_mn B_m(u) B_n(t),   u = warp(k / sqrt(theta(T))),  t = ln T
   dc/dT    = 1/2 v (c_kk - c_k)        (normalized calls; Crank-Nicolson with a Rannacher start)
   start    first expiry, from the SSVI slice with a density correction
-           q(k, T1) = q0(k, T1) [1 + sum_m a^1_m B_m(x)],  a^1_m >= -1  (butterfly-free), mass and forward kept
+           q(k, T1) = q0(k, T1) [1 + sum_m (P a^1)_m B_m(x)],  P projects out mass and forward changes (exact)
            (or, with start = "zero", from near t = 0 with the correction also acting before T1)
 
 Any v > 0 evolved from an arbitrage-free slice gives a surface with no butterfly and no calendar arbitrage at
@@ -117,6 +117,14 @@ def spline_range(mk, cfg):
     return float(lo), float(hi)
 
 
+def edge_values(kg):
+    """Boundary values: intrinsic value at both grid edges (1 - e^k deep in the money, 0 far out of the money).
+    The edges are many standard deviations out for every expiry, where time value is nil; a constant boundary
+    keeps prices increasing in maturity, and it does not import the SSVI wings' time value at the edge (which
+    kinked against the interior and showed up as a negative density next to the boundary)."""
+    return max(1 - np.exp(kg[0]), 0.0), max(1 - np.exp(kg[-1]), 0.0)
+
+
 class LocalVarSurface:
     """Exact surface for given SSVI baseline and coefficients, with its linear responses.
 
@@ -135,6 +143,7 @@ class LocalVarSurface:
             raise ValueError(f"start must be 'zero' or 'first_slice', not {cfg.start!r}")
         self.zero_start = cfg.start == "zero"
         self.kg = log_strike_grid(mk, base, cfg); self.fd = fd_coefficients(self.kg)
+        self.edges = edge_values(self.kg)
         j0 = int(np.argmin(np.abs(self.kg)))
         self.dk = float(min(self.kg[j0 + 1] - self.kg[j0], self.kg[j0] - self.kg[j0 - 1]))   # spacing at the money
         self.t_start = self._start_time() if self.zero_start else float(self.Tn[0])
@@ -251,19 +260,22 @@ class LocalVarSurface:
         return (1 - f) * C[j] + f * C[j + 1]
 
     def _first_slice_modes(self):
-        """Price modes of the first-slice density correction (delta_c = Q2 - e^k Q1) and its
-        mass / forward rows (normalized)."""
+        """Price modes of the first-slice density correction (delta_c = Q2 - e^k Q1). Mass and forward are kept
+        EXACTLY for any coefficients and any baseline: the coefficients act through their projection onto the
+        null space of the current baseline's mass / forward rows (those rows move with the SSVI parameters, so
+        a linear constraint fixed at the start would drift). Returns no constraint rows."""
         b, kg, T1 = self.base, self.kg, self.Tn[0]
         _, q0 = durrleman(lambda kk: b.w0(kk, T1), kg)
         Q = np.maximum(q0, 0.0)[:, None] * self.Bx(kg / np.sqrt(b.theta(T1)))
         Q1 = cumulative_trapezoid(Q[::-1], -kg[::-1], axis=0, initial=0)[::-1]
         Q2 = cumulative_trapezoid((np.exp(kg)[:, None] * Q)[::-1], -kg[::-1], axis=0, initial=0)[::-1]
-        self.ICm = Q2 - np.exp(kg)[:, None] * Q1
-        if self.zero_start:                       # no first-slice density correction: its coefficients are pinned
-            self.ICm = np.zeros_like(self.ICm)
-            return np.eye(self.n_x)
+        if self.zero_start:                       # no first-slice density correction
+            self.ICm = np.zeros((len(kg), self.n_x)); self.P_E = np.zeros((self.n_x, self.n_x))
+            return np.zeros((0, self.n_x))
         E = np.vstack([Q1[0], Q2[0]])
-        return E / np.linalg.norm(E, axis=1, keepdims=True)
+        self.P_E = np.eye(self.n_x) - E.T @ np.linalg.solve(E @ E.T, E)
+        self.ICm = (Q2 - np.exp(kg)[:, None] * Q1) @ self.P_E
+        return np.zeros((0, self.n_x))
 
     # ---------------------------------------------------------------- responses
     def _precompute(self):
@@ -296,11 +308,10 @@ class LocalVarSurface:
         zer = np.zeros((len(kg), nx))
         S_prev = proj(np.hstack([zer, self.nu_basis(tg[0]) * src[0][:, None]]))
         self.Phi = {0: C.copy()}
-        bc_lin = (proj(np.r_[self.ICm[0], np.zeros(self.Dnu)][None, :])[0], np.zeros(C.shape[1]))
         for n in range(len(tg) - 1):
             S_next = proj(np.hstack([zer, self.nu_basis(tg[n + 1]) * src[n + 1][:, None]]))
             C = step(n, C, self.bands[n], self.bands[n + 1], tg[n + 1] - tg[n], self.cfg.rannacher, S_prev, S_next,
-                     bc=bc_lin)
+                     bc=(np.zeros(C.shape[1]), np.zeros(C.shape[1])))
             S_prev = S_next
             if n + 1 in self.iexp:
                 self.Phi[self.iexp.index(n + 1)] = C.copy()
@@ -308,13 +319,11 @@ class LocalVarSurface:
         for s in range(self.nT):
             m = idx == s
             self.A[m] = self.interp(self.Phi[s], k[m])
-        self.cons_rows = np.array([proj(np.r_[e, np.zeros(self.Dnu)][None, :])[0] for e in E])
+        self.cons_rows = np.zeros((0, C.shape[1]))                 # conservation is exact (see _first_slice_modes)
 
     # ---------------------------------------------------------------- exact surface
     def full_solve(self, a=None, all_steps=False):
         b, kg, tg, nx = self.base, self.kg, self.tg, self.n_x
-        off = 0.0 if a is None else float(self.ICm[0] @ a[:nx])        # conserved mass / forward mismatch
-        bc = lambda t: (call(kg[:1], b.w0(kg[:1], t))[0] + off, call(kg[-1:], b.w0(kg[-1:], t))[0])
 
         def bands_at(n):
             if a is None:
@@ -327,7 +336,7 @@ class LocalVarSurface:
         bn = bands_at(0)
         for n in range(len(tg) - 1):
             bn1 = bands_at(n + 1)
-            C = step(n, C, bn, bn1, tg[n + 1] - tg[n], self.cfg.rannacher, bc=bc(tg[n + 1])); bn = bn1
+            C = step(n, C, bn, bn1, tg[n + 1] - tg[n], self.cfg.rannacher, bc=self.edges); bn = bn1
             if n + 1 in self.iexp:
                 out[self.iexp.index(n + 1)] = C[:, 0].copy()
             if all_steps:

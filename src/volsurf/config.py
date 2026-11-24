@@ -59,7 +59,7 @@ class Config:
     # --- Dupire grid
     n_grid: int = 700                 # log-strike nodes, k = A sinh(xi) with A = grid_core * first ATM sd
     grid_core: float = 2.0
-    grid_sd: float = 8.0              # the grid reaches grid_sd (puts) / 0.75 grid_sd (calls) last-expiry sds
+    grid_sd: float = 12.0             # the grid reaches grid_sd (puts) / 0.75 grid_sd (calls) last-expiry sds
     k_lo: float = -0.5                # ... and at least this range in k
     k_hi: float = 0.4
     steps_per_lntheta: float = 30.0   # time steps per unit growth of ln theta in each expiry interval

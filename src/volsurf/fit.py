@@ -12,7 +12,8 @@ Modes         as many as carry information: kappa >= kappa_min (or a fixed n_mod
 import numpy as np
 from scipy.optimize import minimize, lsq_linear
 from scipy.special import logsumexp
-from .ssvi import SSVISlices, initial_q, bounds, widths, penalty, psi_law, smoothness, unpack, ssvi_w
+from .ssvi import SSVISlices, initial_q, bounds, widths, penalty, psi_law, smoothness, unpack, ssvi_w, \
+    project_calendar
 from .black import call, vega_w
 from .likelihood import QuoteLikelihood
 from .dupire import LocalVarSurface
@@ -110,11 +111,11 @@ def fit_baseline(mk, cfg, q_init=None, log=None):
     best = min((run(mid, q0) for q0 in starts), key=lambda r: r.fun)
     scan = {}
     for sc in scales:
-        r = run(sc, best.x); q = r.x
+        r = run(sc, best.x); q = project_calendar(np.clip(r.x, lo, hi), nT)
         wd = widths(q, nT)
         H = _hess_from_grad(lambda u: objective(q + u * wd, sc)[1] * wd, np.zeros(len(q)), np.full(len(q), 1e-4))
         sign, ld = np.linalg.slogdet(H)
-        F = r.fun - 0.5 * len(q) * np.log(2 * np.pi) + 0.5 * (ld if sign > 0 else np.inf)
+        F = objective(q, sc)[0] - 0.5 * len(q) * np.log(2 * np.pi) + 0.5 * (ld if sign > 0 else np.inf)
         scan[sc] = dict(q=q, F=float(F), nll=float(lik(slice_prices(mk, q))))
         if log:
             log(f"    term-structure scale {sc}: F {F:.1f}")
@@ -184,7 +185,7 @@ def lm_fit(mk, cfg, q, U, c, tau, a_offset=None, prior_matrix=None, log=None, sm
         Xs = np.vstack([np.sqrt(W)[:, None] * X, np.hstack([np.zeros((K, d)), Lc.T]), np.diag(dg)])
         ys = np.r_[np.sqrt(W) * r_lin, -np.linalg.solve(Lc, bvec), dg * np.r_[np.zeros(d), c]]
         th = lsq_linear(Xs, ys).x
-        q_try = np.clip(q + th[:d] * widths(q, nT), lo, hi); c_try = th[d:]
+        q_try = project_calendar(np.clip(q + th[:d] * widths(q, nT), lo, hi), nT); c_try = th[d:]
         trial = build(q_try, c_try); f_new = phi(trial, q_try, c_try)
         if not (np.isfinite(f_new) and f_new < f_cur):
             lam *= 5
