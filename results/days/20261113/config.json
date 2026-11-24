@@ -78,23 +78,25 @@
  "mid_pull": 2.0,
  "tau_grid": [
   0.05,
-  10.0,
-  18
+  1000.0,
+  30
  ],
  "gain_tol": 1e-07,
  "max_iter": 300,
  "tau_rounds": 4,
  "relin_rounds": 1,
- "n_grid": 700,
- "grid_core": 2.0,
+ "relin_max_cost": 50.0,
+ "n_grid": 1400,
+ "grid_core": 4.0,
  "grid_sd": 12.0,
  "k_lo": -0.5,
  "k_hi": 0.4,
  "steps_per_lntheta": 30.0,
  "min_steps": 6,
  "steps_per_interval": 40,
+ "nu_amplitude": 1.5,
  "wing_anchor": 0.25,
  "support_gap": 0.5,
  "rannacher": 2,
- "start": "first_slice"
+ "start": "zero"
 }
