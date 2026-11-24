@@ -93,6 +93,7 @@ class LocalVarSurface:
         t0, t1 = self.tcoord(self.Tn[0]), self.tcoord(self.Tn[-1])
         self.tu = clamped_knots(t0, t1, cfg.n_t)
         self.P1 = self._prior(t0, t1)
+        self.Q = self._anchor()
         self._precompute()
 
     # ---------------------------------------------------------------- coordinates and bases
@@ -138,6 +139,30 @@ class LocalVarSurface:
         P = np.zeros((self.D, self.D))
         P[:cfg.n_x, :cfg.n_x] = np.linalg.inv(C1); P[cfg.n_x:, cfg.n_x:] = np.linalg.inv(Cnu)
         return P
+
+    def _anchor(self):
+        """Wing anchor: a fixed Gaussian prior, NOT scaled by tau, on the coefficients of splines that lie where no
+        quotes are. Q = diag(f_j) / sigma_w^2, f_j = share of spline j's weight outside the supported region
+        (see `supported`). The smoothness prior P1 / tau^2 lets tau grow when the core needs freedom; without the
+        anchor that freedom leaks into the unobserved wings, where exp(nu) is unbounded."""
+        cfg = self.cfg; D = self.D
+        sig = getattr(cfg, "wing_anchor", 0.0)
+        if not sig or "full" not in self.mk:
+            return np.zeros((D, D))
+        xs = np.linspace(cfg.x_lo, cfg.x_hi, 173)
+        ts = np.geomspace(self.Tn[0], self.Tn[-1], 41) if self.nT > 1 else self.Tn[:1]
+        Bx = full_bspline_basis(self.tx, warp(xs, cfg.warp))                 # (x, n_x)
+        f = np.zeros(D)
+        # first-slice density coefficients: support at the first expiry
+        u0 = 1.0 - self.supported(self.Tn[0], xs)
+        f[:cfg.n_x] = (Bx * u0[:, None]).sum(0) / np.maximum(Bx.sum(0), 1e-12)
+        num = np.zeros((cfg.n_x, cfg.n_t)); den = np.zeros_like(num)
+        for t in ts:
+            bt = self.Bt(t); u = 1.0 - self.supported(t, xs)
+            num += np.outer((Bx * u[:, None]).sum(0), bt); den += np.outer(Bx.sum(0), bt)
+        f[cfg.n_x:] = (num / np.maximum(den, 1e-12)).reshape(-1)
+        self.unsupported_share = f
+        return np.diag(f) / sig ** 2
 
     # ---------------------------------------------------------------- helpers
     def _Dc(self, c):

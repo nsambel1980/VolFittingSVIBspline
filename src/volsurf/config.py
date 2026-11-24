@@ -49,6 +49,7 @@ class Config:
     k_lo: float = -2.2
     k_hi: float = 1.6
     steps_per_interval: int = 40
+    wing_anchor: float = 0.25         # prior sd of nu (log local-variance factor) where no quotes are; 0 = off
     support_gap: float = 0.5          # local vol is "supported" where two-sided quotes are at most this far apart (x)
     rannacher: int = 2                # first solver steps taken as implicit half-steps (damps CN oscillations)
     start: str = "first_slice"        # "first_slice": density correction at T1, solve from T1;

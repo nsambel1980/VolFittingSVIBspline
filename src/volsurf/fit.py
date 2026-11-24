@@ -1,6 +1,6 @@
 """Fitting: the SSVI baseline, then baseline parameters + K mode coefficients on the exact surface.
 
-Objective     -ln L(bid/ask) + SSVI penalty + 1/2 |c|^2 / tau^2
+Objective     -ln L(bid/ask) + SSVI penalty + 1/2 a^T P1 a / tau^2 + 1/2 a^T Q a   (a = U c; Q: fixed wing anchor)
 Optimizer     Levenberg-Marquardt; every trial step re-solves Dupire and recomputes the mode responses
 Free energy   Laplace approximation at the optimum, tau integrated over a log grid; flat unit boxes on the
               baseline parameters (the Jacobian is scaled by their prior widths)
@@ -55,23 +55,26 @@ def fit_baseline(mk, cfg):
 
 
 # ---------------------------------------------------------------- free energy
-def free_energy(model, lik, Jn, c, tau_grid, prior_center=None):
+def free_energy(model, lik, Jn, c, tau_grid, prior_center=None, U=None):
     """Laplace free energy at the current point, tau integrated on a log grid.
-    Prior on the K mode coefficients: 1/2 |c + b|^2 / tau^2 (b = prior_center, default 0)."""
+    Prior on the K mode coefficients: 1/2 |c + b|^2 / tau^2 + 1/2 c^T Qc c (b = prior_center, default 0;
+    Qc = U^T Q U, the fixed wing anchor)."""
     d, K = Jn.shape[1], len(c)
     b = np.zeros(K) if prior_center is None else prior_center
+    Qc = np.zeros((K, K)) if U is None else U.T @ model.Q @ U
     gw, _, W = lik.newton_weights(model.w_ref_q)
     X = np.hstack([Jn, model.A]); f0 = lik(model.w_ref_q); th0 = np.r_[np.zeros(d), c]
     out = []
     for g in tau_grid:
-        P = np.zeros((d + K, d + K)); P[d:, d:] = np.eye(K) / np.exp(2 * g)
+        Pk = np.eye(K) / np.exp(2 * g) + Qc
+        P = np.zeros((d + K, d + K)); P[d:, d:] = Pk
         H = X.T @ (W[:, None] * X) + P
-        grad_prior = np.r_[np.zeros(d), (c + b) / np.exp(2 * g)]
+        grad_prior = np.r_[np.zeros(d), (c + b) / np.exp(2 * g) + Qc @ c]
         dth = np.linalg.solve(H, -(X.T @ gw) - grad_prior)
         th = th0 + dth; dl = X @ dth
         cc = th[d:] + b
-        fq = f0 + gw @ dl + 0.5 * np.sum(W * dl ** 2) + 0.5 * cc @ cc / np.exp(2 * g)
-        out.append(fq + 0.5 * np.linalg.slogdet(H)[1] + K * g - 0.5 * d * np.log(2 * np.pi))
+        fq = f0 + gw @ dl + 0.5 * np.sum(W * dl ** 2) + 0.5 * cc @ cc / np.exp(2 * g) + 0.5 * th[d:] @ Qc @ th[d:]
+        out.append(fq + 0.5 * np.linalg.slogdet(H)[1] - 0.5 * np.linalg.slogdet(Pk)[1] - 0.5 * d * np.log(2 * np.pi))
     out = np.array(out); j = int(np.argmin(out))
     F = -(logsumexp(-out) + np.log(tau_grid[1] - tau_grid[0]) - np.log(tau_grid[-1] - tau_grid[0]))
     return float(F), float(np.exp(tau_grid[j]))
@@ -96,11 +99,12 @@ def lm_fit(mk, cfg, q, U, c, tau, a_offset=None, prior_matrix=None, log=None):
 
     cur = build(q, c)
     P = cur.P1 if prior_matrix is None else prior_matrix
-    Pc = U.T @ P @ U; bvec = U.T @ P @ a0
-    prior = lambda c_: 0.5 * (a0 + U @ c_) @ P @ (a0 + U @ c_) / tau ** 2
+    M = P / tau ** 2 + cur.Q                                       # smoothness / tau^2 + fixed wing anchor
+    Pc = U.T @ M @ U; bvec = U.T @ M @ a0
+    prior = lambda c_: 0.5 * (a0 + U @ c_) @ M @ (a0 + U @ c_)
     phi = lambda m_, q_, c_: lik(m_.w_ref_q) + penalty(q_, nT) + prior(c_)
     f_cur = phi(cur, q, c); lam = 1e-2; small = 0; steps = 0
-    Lc = np.linalg.cholesky(Pc / tau ** 2)
+    Lc = np.linalg.cholesky(Pc)
     for _ in range(cfg.max_iter):
         Jn = jac_baseline(mk, q, cfg); gw, W, _ = lik.newton_weights(cur.w_ref_q)
         Am = cur.A                                                  # responses along U at the current point
@@ -108,7 +112,7 @@ def lm_fit(mk, cfg, q, U, c, tau, a_offset=None, prior_matrix=None, log=None):
         X = np.hstack([Jn, Am])
         dg = np.sqrt(lam * (np.sum(W[:, None] * X ** 2, axis=0) + 1e-12))
         Xs = np.vstack([np.sqrt(W)[:, None] * X, np.hstack([np.zeros((K, d)), Lc.T]), np.diag(dg)])
-        ys = np.r_[np.sqrt(W) * r_lin, -np.linalg.solve(Lc, bvec / tau ** 2), dg * np.r_[np.zeros(d), c]]
+        ys = np.r_[np.sqrt(W) * r_lin, -np.linalg.solve(Lc, bvec), dg * np.r_[np.zeros(d), c]]
         th = lsq_linear(Xs, ys).x
         q_try = np.clip(q + th[:d] * widths(q, nT), lo, hi); c_try = th[d:]
         trial = build(q_try, c_try); f_new = phi(trial, q_try, c_try)
@@ -134,7 +138,7 @@ def fit_modes(mk, q0, V, cfg, K=None, log=None):
     grid = tau_grid(cfg); lik = QuoteLikelihood(mk, cfg.s_noise); total = 0
     for _ in range(cfg.tau_rounds):
         cur, q, c, steps = lm_fit(mk, cfg, q, U, c, tau, log=log); total += steps
-        F, tau_new = free_energy(cur, lik, jac_baseline(mk, q, cfg), c, grid)
+        F, tau_new = free_energy(cur, lik, jac_baseline(mk, q, cfg), c, grid, U=U)
         if abs(np.log(tau_new / tau)) < 0.25:
             break
         tau = tau_new
