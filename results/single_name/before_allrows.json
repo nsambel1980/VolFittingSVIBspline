@@ -1,0 +1,13 @@
+{
+ "label": "head_allrows",
+ "config": [
+  "n_per_expiry=1000",
+  "quote_x_lo=-1000",
+  "quote_x_hi=1000"
+ ],
+ "base": {
+  "error": "ValueError: array must not contain infs or NaNs",
+  "where": "    raise ValueError(",
+  "seconds": 902.1885144710541
+ }
+}

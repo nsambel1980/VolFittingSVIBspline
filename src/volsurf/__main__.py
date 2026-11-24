@@ -1,7 +1,7 @@
 """Command line.
 
-  python -m volsurf fit CHAIN.json --out DIR [--modes DIR/modes.npz] [--n-modes 24] [--no-relin] [--no-plots]
-  python -m volsurf fit-vols VOLS.csv --out DIR [--quote-time 2026-11-19T15:22] [--s-noise 0.0005] [...]
+  python -m volsurf fit CHAIN.json --out DIR [--spx-study] [--modes DIR/modes.npz] [--n-modes K] [--no-relin]
+  python -m volsurf fit-vols VOLS.csv --out DIR [--quote-time 2026-11-19T15:22] [--price-noise 0.25] [...]
 
 The CSV for fit-vols has one row per strike: expiry (YYYY-MM-DD, needs --quote-time) or T (years);
 strike + forward, or k = ln(K/F); iv_bid + iv_ask, or iv_mid [+ half_spread]; vols as decimals.
@@ -20,6 +20,7 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     f = sub.add_parser("fit", help="fit one Cboe option chain (prices)")
     f.add_argument("chain")
+    f.add_argument("--spx-study", action="store_true", help="the published SPX setup: nine monthly expiries")
     v = sub.add_parser("fit-vols", help="fit implied vols from a CSV")
     v.add_argument("csv")
     v.add_argument("--quote-time", help="ISO time of the quotes; needed when the CSV gives expiry dates")
@@ -30,7 +31,8 @@ def main(argv=None):
         q.add_argument("--n-modes", type=int, default=Config().n_modes, help="0 = by information (default)")
         q.add_argument("--no-relin", action="store_true"); q.add_argument("--no-plots", action="store_true")
     a = p.parse_args(argv)
-    cfg = Config(n_modes=a.n_modes)
+    from .config import SPX_STUDY
+    cfg = (SPX_STUDY if getattr(a, "spx_study", False) else Config()).with_(n_modes=a.n_modes)
     if a.cmd == "fit-vols" and a.price_noise is not None:
         cfg = cfg.with_(price_noise=a.price_noise)
     modes = None

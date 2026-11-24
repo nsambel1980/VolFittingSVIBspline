@@ -22,13 +22,14 @@ for path in chains():
     localvol_slices([model], [f"SPX {mk['quote_time']}"], out / "localvol_slices.png")
     models.append(model); labels.append(f"SPX {mk['quote_time']}")
     c = res["checks"]
-    rows.append([day, f"{res['fit']['F']:.1f}", f"{100 * c['inside_all']:.1f}%", f"{c['atmf_gap_volpts']:.3f}",
-                 f"{c['skew_gap']:.1e}", f"{c['min_density_ratio']:.1e}", f"{c['min_price_change']:.1e}",
+    rows.append([day, len(mk["k"]), res["fit"]["K"], f"{100 * c['inside_all']:.1f}%", f"{c['price_rms_h']:.2f}",
+                 c["band_misses"], c["ask_breaches"], f"{c['atmf_gap_volpts']:.3f}",
+                 "yes" if c["arbitrage_free"] else f"no: {list(c['arbitrage_failures'])}",
                  f"{max(c['expiry_jumps_volpts']):.2f}", f"{res['minutes']:.1f}"])
     print(f"  inside {100 * c['inside_all']:.1f}%, {res['minutes']:.1f} min")
 
 localvol_3d(models, labels, out_dir("days") / "localvol_3d.png")
 (out_dir("days") / "summary.md").write_text(markdown_table(rows, [
-    "day", "free energy", "inside bid-ask", "ATMF gap (vol pts)", "skew gap", "min density / max",
-    "min price change", "max expiry jump (vol pts)", "minutes"]))
+    "day", "quotes", "modes", "inside bid-ask", "price RMS (half-spreads)", "band misses", "ask breaches",
+    "ATMF gap (vol pts)", "arbitrage-free", "max expiry jump (vol pts)", "minutes"]))
 print(open(out_dir("days") / "summary.md").read())

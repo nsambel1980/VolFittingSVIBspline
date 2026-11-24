@@ -12,6 +12,7 @@ python data/fetch.py --verify || echo "note: reference snapshots missing or diff
 
 python exp/01_fit_days.py
 python exp/05_skew_interp.py
+python exp/07_single_name.py --shocks
 if [ "${1:-quick}" = "full" ]; then
   python exp/02_stability.py
   python exp/03_n_modes.py

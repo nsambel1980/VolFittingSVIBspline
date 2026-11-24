@@ -1,0 +1,9 @@
+{
+ "label": "head_thinned",
+ "config": [],
+ "base": {
+  "error": "LinAlgError: Singular matrix",
+  "where": "  File \"/usr/local/lib/python3.13/site-packages/numpy/linalg/_linalg.py\", line 144, in _raise_linalgerror_singular",
+  "seconds": 1023.5476429462433
+ }
+}

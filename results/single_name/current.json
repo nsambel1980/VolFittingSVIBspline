@@ -1,0 +1,37 @@
+{
+ "label": "new_v4",
+ "config": [],
+ "base": {
+  "seconds": 137.85422205924988,
+  "rows": 1270,
+  "price_rms_h": 0.47353999265966457,
+  "band_misses": 59,
+  "ask_breaches": 1,
+  "iv_rms_volpts": 0.5700791732904926,
+  "iv_max_volpts": 5.981185977013492,
+  "strike_bend_supported": 1.2073310314791699,
+  "strike_bend_weak": 1.433001324723411,
+  "week_bend_supported": 104.7668080696085,
+  "week_bend_weak": 412.02836608740193,
+  "lv_max": 286.8618286825492,
+  "min_density_ratio": -3.4672372891013053e-09,
+  "min_price_change": -1.887379141862766e-15,
+  "delivered_butterfly": -3.071257756092254e-11,
+  "delivered_calendar": 6.857857437513329e-14,
+  "baseline_calendar": 5.50292816894985e-08,
+  "baseline_floored": 0.0,
+  "arbitrage_free": true,
+  "K": 98,
+  "F": -7983.531149056569
+ },
+ "shock+": {
+  "seconds": 149.05703234672546,
+  "lv_move_supported": 1.0394432347734266,
+  "lv_move_weak": 4.987891619145702
+ },
+ "shock-": {
+  "seconds": 144.92077374458313,
+  "lv_move_supported": 0.7940344268040979,
+  "lv_move_weak": 8.021943481875942
+ }
+}
