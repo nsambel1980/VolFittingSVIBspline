@@ -23,16 +23,16 @@ def main(argv=None):
     v = sub.add_parser("fit-vols", help="fit implied vols from a CSV")
     v.add_argument("csv")
     v.add_argument("--quote-time", help="ISO time of the quotes; needed when the CSV gives expiry dates")
-    v.add_argument("--s-noise", type=float, help="vol noise added to the bid-ask likelihood (default from Config)")
+    v.add_argument("--price-noise", type=float, help="likelihood noise in half-spreads (default from Config)")
     for q in (f, v):
         q.add_argument("--out", required=True)
         q.add_argument("--modes", help="modes.npz from an earlier fit, reused instead of recomputing")
-        q.add_argument("--n-modes", type=int, default=Config().n_modes)
+        q.add_argument("--n-modes", type=int, default=Config().n_modes, help="0 = by information (default)")
         q.add_argument("--no-relin", action="store_true"); q.add_argument("--no-plots", action="store_true")
     a = p.parse_args(argv)
     cfg = Config(n_modes=a.n_modes)
-    if a.cmd == "fit-vols" and a.s_noise is not None:
-        cfg = cfg.with_(s_noise=a.s_noise)
+    if a.cmd == "fit-vols" and a.price_noise is not None:
+        cfg = cfg.with_(price_noise=a.price_noise)
     modes = None
     if a.modes:
         d = np.load(a.modes); modes = dict(V=d["V"], kappa=d["kappa"])

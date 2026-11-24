@@ -15,8 +15,8 @@ from volsurf.ssvi import SSVISlices, psi_law          # noqa: E402
 from volsurf.dupire import LocalVarSurface            # noqa: E402
 from volsurf.market import build_market_from_vols     # noqa: E402
 
-FAST = Config(n_x=9, n_t=4, dk=0.003, steps_per_interval=12, n_modes=8, max_iter=80, tau_rounds=2,
-              gain_tol=1e-6)
+FAST = Config(n_x=9, n_t=4, x_lo=-5.55, x_hi=3.05, n_grid=700, steps_per_interval=12, min_steps=4, n_modes=8,
+              max_iter=80, tau_rounds=2, gain_tol=1e-6, smooth_grid=(0.1, 0.4))
 T_SYN = np.array([0.1, 0.25, 0.5, 1.0])
 
 

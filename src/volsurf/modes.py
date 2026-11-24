@@ -1,8 +1,9 @@
 """Information-ranked correction modes.
 
 1. Linear responses of the exact surface to all D = n_x (1 + n_t) coefficients, around the SSVI baseline.
-2. Constraints: a correction must not change, to first order, the ATMF level or the ATM skew at any expiry
-   (2 nT rows), nor the mass and forward of the first slice (2 rows). Their null space is admissible.
+2. Constraints: a correction must not change, to first order, the ATMF level at any expiry (nT rows), nor the
+   mass and forward of the first slice (2 rows). Their null space is admissible. The ATM skew is free: the
+   correction may reshape it (the skew of the fitted surface is a reported output, not a parameter).
 3. Within it, the generalized eigenproblem  (A^T W A) v = kappa P1 v : data information (curvature of the
    bid/ask likelihood) against prior information. Modes = eigenvectors, largest kappa first; V^T P1 V = I.
 """
@@ -23,15 +24,15 @@ def atm_rows(model):
 
 
 def constraint_rows(model):
-    L, S = atm_rows(model)
-    return np.vstack([L, S, model.cons_rows])
+    L, _ = atm_rows(model)
+    return np.vstack([L, model.cons_rows])
 
 
 def rank_modes(model, rows, lik):
     """Null space of `rows`, ranked by data / prior information at the model's reference surface."""
     R = rows / np.linalg.norm(rows, axis=1, keepdims=True)
     Z = null_space(R, rcond=1e-10)
-    _, W, _ = lik.newton_weights(model.w_ref_q)
+    _, W, _ = lik.newton_weights(model.c_ref_q)
     Az = model.A @ Z
     kap, v = eigh(Az.T @ (W[:, None] * Az), Z.T @ model.P1 @ Z)
     order = np.argsort(kap)[::-1]
@@ -39,8 +40,8 @@ def rank_modes(model, rows, lik):
 
 
 def compute_modes(mk, base, cfg):
-    model = LocalVarSurface(mk, base, cfg, a=np.zeros(cfg.n_x * (1 + cfg.n_t)))
-    lik = QuoteLikelihood(mk, cfg.s_noise)
+    model = LocalVarSurface(mk, base, cfg)
+    lik = QuoteLikelihood(mk, cfg)
     rows = constraint_rows(model)
     V, kappa = rank_modes(model, rows, lik)
     L, S = atm_rows(model)

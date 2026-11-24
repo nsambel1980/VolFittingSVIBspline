@@ -8,12 +8,13 @@ Writes results/prior_length/prior_length.json and prior_length.md.
 import sys
 from _common import chains, day_of, out_dir, dump, markdown_table
 from volsurf import Config, run_day
+from volsurf.config import SPX_STUDY
 
 files = sys.argv[1:] or chains()
 ells = (0.6, 1.0, 1.6, 2.5)
 out = {}
 for ell in ells:
-    cfg = Config().with_(ell_x=ell); out[ell] = {}
+    cfg = SPX_STUDY.with_(ell_x=ell); out[ell] = {}
     for path in files:
         r = run_day(path, cfg, relin=False, log=lambda *_: None)
         out[ell][day_of(path)] = dict(F=r["fit"]["F"], inside=r["checks"]["inside_all"])

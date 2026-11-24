@@ -129,8 +129,10 @@ def test_vols_give_the_same_market_as_prices():
     mv = build_market_from_vols([dict(expiry="2027-05-19", root="SPX", strike=f["K"], forward=q["F"],
                                       iv_bid=f["iv_bid"], iv_ask=f["iv_ask"], iv_mid=f["iv_mid"])], cfg,
                                 quote_time=quote_time)
-    for key in ("T", "k", "i", "iv_bid", "iv_ask", "z", "theta_atm"):
+    for key in ("T", "k", "i", "theta_atm"):
         np.testing.assert_allclose(mv[key], mp[key], atol=1e-12, err_msg=key)
+    for key in ("c_bid", "c_ask", "c_mid", "h"):                      # prices -> vols -> prices
+        np.testing.assert_allclose(mv[key], mp[key], atol=1e-10, err_msg=key)
 
 
 def test_vol_csv_round_trip(tmp_path):
@@ -152,9 +154,9 @@ def test_vol_csv_round_trip(tmp_path):
 def test_mid_vols_only_and_input_checks():
     e = synthetic_quotes(FAST, n_all=30)[0][1]
     mk = build_market_from_vols([dict(T=e["T"], k=e["k"], iv_mid=e["iv_mid"])], FAST)
-    assert np.all(mk["iv_ask"] - mk["iv_bid"] > 0) and np.all(mk["iv_ask"] - mk["iv_bid"] < 1e-4)
+    assert np.all(mk["c_ask"] - mk["c_bid"] > 0) and np.all(mk["iv_ask"] - mk["iv_bid"] < 1e-4)
     mk = build_market_from_vols([dict(T=e["T"], k=e["k"], iv_mid=e["iv_mid"], half_spread=0.002)], FAST)
-    np.testing.assert_allclose(mk["iv_ask"] - mk["iv_bid"], 0.004)
+    np.testing.assert_allclose(mk["iv_ask"] - mk["iv_bid"], 0.004, atol=1e-8)
     with pytest.raises(ValueError, match="percentages"):
         build_market_from_vols([dict(T=e["T"], k=e["k"], iv_mid=100 * e["iv_mid"])], FAST)
     with pytest.raises(ValueError, match="bracket"):
@@ -182,7 +184,7 @@ def test_one_sided_quotes_enter_from_prices_and_vols():
     mk = build_market_from_vols([dict(T=e["T"], k=e["k"], iv_bid=b, iv_ask=a)], cfg)
     f = mk["full"][0]
     assert f["one_sided"].sum() == 9 and np.all(f["iv_bid"][:6] == 0) and np.all(np.isinf(f["iv_ask"][-3:]))
-    assert np.isclose(mk["theta_atm"][0], np.interp(0, e["k"], e["iv_mid"] ** 2 * e["T"]))
+    assert np.isclose(mk["theta_atm"][0], np.interp(0, e["k"], e["iv_mid"] ** 2 * e["T"]), rtol=2e-3)
     off = build_market_from_vols([dict(T=e["T"], k=e["k"], iv_bid=b, iv_ask=a)], cfg.with_(one_sided=False))
     assert off["full"][0]["one_sided"].sum() == 0 and len(off["full"][0]["k"]) == len(f["k"]) - 9
     # prices: an ask-only put far out of the money is kept

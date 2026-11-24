@@ -71,6 +71,25 @@ def penalty(q, nT):
             + np.sum(np.maximum(psi ** 2 * (1 + r) - 3.9 * th, 0) ** 2 / th ** 2) + cal) * 1e6
 
 
+def smoothness(q, T, scale):
+    """-ln prior of a smooth term structure (proper, so `scale` can be chosen by evidence):
+    Cauchy priors on the increments of log forward variance ln[(theta_i - theta_(i-1)) / (T_i - T_(i-1))] and of
+    rho_i between neighbouring expiries, with scale `scale` and 0.5 `scale` per sqrt(ln T step). The heavy tails
+    let one interval carry an earnings-type jump in variance without roughening the others."""
+    nT = len(T)
+    if nT < 2 or not scale:
+        return 0.0
+    th, sk, psi, rho, eta, gam = unpack(q, nT)
+    Tp = np.r_[0.0, T]; thp = np.r_[0.0, th]
+    fwd = np.maximum(np.diff(thp) / np.diff(Tp), 1e-12)
+    tm = np.r_[T[0] / 2, np.sqrt(T[:-1] * T[1:])]                       # where each forward variance lives
+    lf = np.log(fwd); dl = np.sqrt(np.diff(np.log(tm)))
+    out = 0.0
+    for d, sc in ((np.diff(lf), scale * dl), (np.diff(rho), 0.5 * scale * np.sqrt(np.diff(np.log(T))))):
+        out += np.sum(np.log(np.pi * sc) + np.log1p((d / sc) ** 2))
+    return float(out)
+
+
 class SSVISlices:
     def __init__(self, T, q, skew_interp="pchip"):
         self.T = np.asarray(T, float); self.nT = len(self.T); self.q = np.asarray(q, float)
@@ -128,6 +147,11 @@ class SSVISlices:
         v = self.dTw0(k, T) / np.where(g > 1e-8, g, np.nan)
         bad = ~np.isfinite(v) | (v < floor)
         return np.where(bad, floor, v), bad
+
+    def c_at_quotes(self, mk):
+        """Normalized call prices of the slices at the fitted quotes."""
+        from .black import call
+        return call(mk["k"], self.w_at_quotes(mk))
 
     def w_at_quotes(self, mk):
         out = np.zeros(len(mk["k"]))

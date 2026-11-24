@@ -6,10 +6,11 @@ localvol_slices.png, plus results/days/localvol_3d.png and results/days/summary.
 import numpy as np
 from _common import chains, day_of, out_dir, markdown_table
 from volsurf import Config, run_day, save_day
+from volsurf.config import SPX_STUDY
 from volsurf.fit import baseline
 from volsurf.plotting import fit_vs_bidask, localvol_slices, localvol_3d
 
-cfg = Config()
+cfg = SPX_STUDY
 models, labels, rows = [], [], []
 for path in chains():
     day = day_of(path); print(f"{day}:")

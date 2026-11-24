@@ -11,23 +11,26 @@ import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from _common import chains, day_of, out_dir, dump
 from volsurf import Config, build_market
+from volsurf.config import SPX_STUDY
 from volsurf.fit import fit_baseline, fit_modes, baseline
 from volsurf.modes import compute_modes
 from volsurf.plotting import STYLE, BLUE, INK
 
 path = sys.argv[1] if len(sys.argv) > 1 else chains()[-1]
-cfg = Config(n_modes=40)
+cfg = SPX_STUDY
 mk = build_market(path, cfg)
 b = fit_baseline(mk, cfg)
 md = compute_modes(mk, baseline(mk, b["q"], cfg), cfg)
-Ks = [k for k in (4, 8, 12, 16, 20, 24, 28, 32, 40) if k <= md["V"].shape[1]]
+from volsurf.fit import n_informative
+K_info = n_informative(md["kappa"], cfg)
+Ks = sorted({k for k in (8, 16, 24, 32, 48, 64, 96, 128, K_info) if k <= md["V"].shape[1]})
 res = {}
 for K in Ks:
-    f = fit_modes(mk, b["q"], md["V"], cfg, K=K)
+    f = fit_modes(mk, b["q"], md["V"], cfg, K=K, smooth=b["smooth"])
     res[K] = dict(F=f["F"], nll=float(f["nll"]), tau=f["tau"])
     print(f"  K={K:2d}  F {f['F']:9.1f}  -lnL {f['nll']:9.1f}  tau {f['tau']:.2f}")
 d = out_dir("n_modes"); day = day_of(path)
-dump(dict(baseline_F=b["F"], scan=res), d / f"{day}.json")
+dump(dict(baseline_F=b["F"], K_by_information=K_info, scan=res), d / f"{day}.json")
 plt.rcParams.update(STYLE)
 fig, ax = plt.subplots(figsize=(7, 3.6))
 ax.plot(Ks, [res[k]["F"] for k in Ks], "o-", color=BLUE, ms=6)

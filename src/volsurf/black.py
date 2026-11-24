@@ -10,10 +10,14 @@ from scipy.stats import norm
 
 
 def call(k, w):
-    """Normalized Black call price c(k, w)."""
-    sw = np.sqrt(w)
-    d1 = -k / sw + sw / 2
-    return norm.cdf(d1) - np.exp(k) * norm.cdf(d1 - sw)
+    """Normalized Black call price c(k, w); w = 0 gives intrinsic value, w = inf gives 1."""
+    k = np.asarray(k, float); w = np.asarray(w, float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sw = np.sqrt(np.where(np.isfinite(w), np.maximum(w, 1e-300), 1.0))
+        d1 = -k / sw + sw / 2
+        c = norm.cdf(d1) - np.exp(k) * norm.cdf(d1 - sw)
+    c = np.where(w <= 0, np.maximum(1 - np.exp(k), 0.0), c)
+    return np.where(np.isinf(w), 1.0, c)
 
 
 def vega_w(k, w):
@@ -45,7 +49,8 @@ def durrleman(wfun, k, h=1e-4):
 
 
 def density_from_calls(c, k):
-    """Density of ln(S_T / F) from normalized calls on a uniform k grid: q = e^-k (c'' - c').
-    Returns the interior points (length len(k) - 2)."""
-    dk = k[1] - k[0]
-    return np.exp(-k[1:-1]) * ((c[2:] - 2 * c[1:-1] + c[:-2]) / dk ** 2 - (c[2:] - c[:-2]) / (2 * dk))
+    """Density of ln(S_T / F) from normalized calls on a (possibly non-uniform) k grid: q = e^-k (c'' - c'),
+    i.e. K d2C/dK2. Returns the interior points (length len(k) - 2)."""
+    K = np.exp(k)
+    slope = np.diff(c) / np.diff(K)
+    return K[1:-1] * np.diff(slope) / (0.5 * (K[2:] - K[:-2]))

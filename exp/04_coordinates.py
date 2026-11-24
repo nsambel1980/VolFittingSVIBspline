@@ -6,8 +6,9 @@ Writes results/coordinates/coordinates.json and coordinates.md. Slow: 8 configur
 """
 from _common import chains, day_of, out_dir, dump, markdown_table
 from volsurf import Config, run_day
+from volsurf.config import SPX_STUDY
 
-base = Config()
+base = SPX_STUDY
 configs = {
     "uniform x, ln T, 4": base,
     "warp c=1, ln T, 4": base.with_(warp=1.0),
