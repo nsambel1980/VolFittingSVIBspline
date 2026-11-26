@@ -27,7 +27,8 @@ class Config:
 
     # --- zeroth order: SSVI slices
     smooth_grid: tuple = (0.0125, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6)   # term-structure prior scales tried (evidence picks)
-    skew_interp: str = "pchip"        # skew between expiries as a function of theta: "pchip" (smooth) or "linear"
+    skew_interp: str = "pchip"
+    psi_free: bool = True             # per-expiry curvature psi_i = psi_law(theta_i) exp(u_i), u_i ~ N(0, 0.5^2)        # skew between expiries as a function of theta: "pchip" (smooth) or "linear"
 
     # --- correction: v = v0 exp(sum a_mn B_m(u) B_n(t))
     n_x: int = 0                      # strike splines; 0 = from the quoted range at spacing dx_spline

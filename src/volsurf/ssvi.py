@@ -30,37 +30,51 @@ def ssvi_w(k, th, psi, rho):
     return 0.5 * (th + rho * psi * k + np.sqrt((psi * k + th * rho) ** 2 + th ** 2 * (1 - rho ** 2)))
 
 
+def free_psi(q, nT):
+    """Per-expiry curvature factors u_i (psi_i = psi_law(theta_i) exp(u_i)), or zeros for the plain law.
+    Layout: q = [theta (nT), s (nT), eta, gamma] or [theta, s, eta, gamma, u (nT)]."""
+    return np.asarray(q[2 * nT + 2:3 * nT + 2], float) if len(q) == 3 * nT + 2 else np.zeros(nT)
+
+
 def unpack(q, nT):
     th, sk, eta, gam = q[:nT], q[nT:2 * nT], q[2 * nT], q[2 * nT + 1]
-    psi = psi_law(th, eta, gam)
+    psi = psi_law(th, eta, gam) * np.exp(free_psi(q, nT))
     return th, sk, psi, np.clip(sk / psi, -0.999, 0.999), eta, gam
 
 
-def initial_q(theta_atm, eta=1.2, gam=0.45, rho=-0.6):
-    return np.r_[theta_atm, rho * psi_law(theta_atm, eta, gam), eta, gam]
+def initial_q(theta_atm, eta=1.2, gam=0.45, rho=-0.6, psi_free=False):
+    q = np.r_[theta_atm, rho * psi_law(theta_atm, eta, gam), eta, gam]
+    return np.r_[q, np.zeros(len(theta_atm))] if psi_free else q
 
 
-def bounds(theta_atm):
+def bounds(theta_atm, psi_free=False):
     nT = len(theta_atm)
     lo = np.r_[0.5 * theta_atm, np.full(nT, -1.0), 0.05, 0.05]
     hi = np.r_[2.0 * theta_atm, np.full(nT, 1.0), 5.0, 0.95]
+    if psi_free:
+        lo, hi = np.r_[lo, np.full(nT, -1.5)], np.r_[hi, np.full(nT, 1.5)]
     return lo, hi
 
 
 def widths(q, nT):
-    """Flat prior box widths: theta +-25%, skew over |rho| <= 1, eta over 4, gamma over 1."""
+    """Flat prior box widths: theta +-25%, skew over |rho| <= 1, eta over 4, gamma over 1, u over 1."""
     th, sk, psi, rho, eta, gam = unpack(q, nT)
-    return np.r_[0.5 * th, 2 * psi, 4.0, 1.0]
+    w = np.r_[0.5 * th, 2 * psi, 4.0, 1.0]
+    return np.r_[w, np.ones(nT)] if len(q) == 3 * nT + 2 else w
 
 
 CAL_MARGIN = 1e-4      # calendar conditions are imposed with this margin, so a small penalized overshoot stays feasible
 
 
 def calendar_gaps(q, nT):
-    """Increments that must be >= 0 for no calendar arbitrage: theta, then the put and call wing slopes."""
+    """Increments that must be >= 0 for no calendar arbitrage: theta, the put and call wing slopes, and (with
+    free per-expiry curvature) ln psi and ln(theta / psi), i.e. psi rising and phi = psi / theta falling."""
     th, sk, psi, rho, eta, gam = unpack(q, nT)
     up, dn = psi * (1 + rho), psi * (1 - rho)
-    return np.diff(th) / th[:-1], np.diff(dn), np.diff(up)
+    out = [np.diff(th) / th[:-1], np.diff(dn), np.diff(up)]
+    if len(q) == 3 * nT + 2:
+        out += [np.diff(np.log(psi)), np.diff(np.log(th / psi))]
+    return tuple(out)
 
 
 def project_feasible(q, nT, rounds=3):
@@ -70,7 +84,7 @@ def project_feasible(q, nT, rounds=3):
     Alternated a few times; both steps only shrink skew changes, so they settle at once in practice."""
     q = np.array(q, float)
     for _ in range(rounds):
-        th = q[:nT]; psi = psi_law(th, q[2 * nT], q[2 * nT + 1])
+        th = q[:nT]; psi = unpack(q, nT)[2]
         rmax = np.clip(np.minimum(3.9 / psi, 3.9 * th / psi ** 2) - 1.0, 0.0, 0.999)
         q[nT:2 * nT] = np.clip(q[nT:2 * nT], -rmax * psi, rmax * psi)
         q = project_calendar(q, nT)
@@ -86,7 +100,17 @@ def project_calendar(q, nT, margin=CAL_MARGIN):
     for i in range(1, nT):
         th[i] = max(th[i], th[i - 1] * (1 + margin))
     eta, gam = q[2 * nT], q[2 * nT + 1]
-    psi = psi_law(th, eta, gam)
+    law = psi_law(th, eta, gam)
+    if len(q) == 3 * nT + 2:
+        # free curvature: ln psi non-decreasing and ln(theta / psi) non-decreasing (phi = psi / theta falling)
+        y = np.log(law) + q[2 * nT + 2:]
+        for i in range(1, nT):
+            lo_, hi_ = y[i - 1] + margin, y[i - 1] + np.log(th[i] / th[i - 1]) - margin
+            y[i] = np.clip(y[i], lo_, max(hi_, lo_))
+        q[2 * nT + 2:] = y - np.log(law)
+        psi = np.exp(y)
+    else:
+        psi = law
     s = np.clip(q[nT:2 * nT], -0.999 * psi, 0.999 * psi)
     for i in range(1, nT):
         room = max(psi[i] - psi[i - 1] - margin, 0.0)
@@ -135,9 +159,17 @@ def smoothness(q, T, scale):
     tm = np.r_[T[0] / 2, np.sqrt(T[:-1] * T[1:])]                       # where each forward variance lives
     lf = np.log(fwd); dl = np.sqrt(np.diff(np.log(tm)))
     out = 0.0
-    for d, sc in ((np.diff(lf), scale * dl), (np.diff(rho), 0.5 * scale * np.sqrt(np.diff(np.log(T))))):
+    terms = [(np.diff(lf), scale * dl), (np.diff(rho), 0.5 * scale * np.sqrt(np.diff(np.log(T))))]
+    if len(q) == 3 * nT + 2:                       # free curvature: smooth across expiries, shrunk to the law
+        u = free_psi(q, nT)
+        terms.append((np.diff(u), 0.5 * scale * np.sqrt(np.diff(np.log(T)))))
+        out += float(np.sum(0.5 * (u / PSI_FREE_SD) ** 2 + np.log(np.sqrt(2 * np.pi) * PSI_FREE_SD)))
+    for d, sc in terms:
         out += np.sum(np.log(np.pi * sc) + np.log1p((d / sc) ** 2))
     return float(out)
+
+
+PSI_FREE_SD = 0.5      # prior sd of the per-expiry curvature factors u_i (psi = psi_law exp(u))
 
 
 class SSVISlices:
@@ -152,6 +184,28 @@ class SSVISlices:
         if skew_interp not in ("pchip", "linear"):
             raise ValueError(f"skew_interp must be 'pchip' or 'linear', not {skew_interp!r}")
         self._m = _lipschitz_hermite_slopes(self._S, self._x) if skew_interp == "pchip" and self.nT > 1 else None
+        # psi between expiries: with free curvature, a C1 Hermite of y = 2 ln psi - ln theta in t = ln theta with
+        # |dy/dt| <= 1 (psi rising, psi / theta falling); otherwise the law itself
+        self.u_i = free_psi(self.q, self.nT)
+        self._lt, self._y = np.log(th), 2 * np.log(psi) - np.log(th)
+        self._my = (_lipschitz_hermite_slopes(self._lt, self._y)
+                    if self.nT > 1 and np.any(self.u_i != 0) and np.all(np.diff(self._lt) > 0) else None)
+
+    def _psi(self, th):
+        """psi at ATM total variance th (between expiries: the Hermite; outside: the law times the end factor)."""
+        lo, hi = self.th_i.min(), self.th_i.max()
+        if self._my is None or th <= lo or th >= hi:
+            j = int(np.argmin(self.th_i)) if th <= lo else int(np.argmax(self.th_i)) if th >= hi else None
+            f = np.exp(self.u_i[j]) if j is not None else None
+            if f is None:                                  # interior, plain law
+                return float(psi_law(th, self.eta, self.gam))
+            return float(psi_law(th, self.eta, self.gam) * f)
+        t = np.log(th); ti, yi = self._lt, self._y
+        j = int(np.clip(np.searchsorted(ti, t) - 1, 0, len(ti) - 2))
+        h = ti[j + 1] - ti[j]; v = (t - ti[j]) / h; m0, m1 = self._my[0][j], self._my[1][j]
+        y = ((2 * v ** 3 - 3 * v ** 2 + 1) * yi[j] + (v ** 3 - 2 * v ** 2 + v) * h * m0
+             + (-2 * v ** 3 + 3 * v ** 2) * yi[j + 1] + (v ** 3 - v ** 2) * h * m1)
+        return float(np.exp(0.5 * (y + t)))
 
     # --- surface
     def theta(self, T):
@@ -165,7 +219,7 @@ class SSVISlices:
     def slice_params(self, T):
         """(theta, psi, rho) at maturity T. At the expiries these are the fitted slices."""
         th = self.theta(T); lo, hi = self.th_i.min(), self.th_i.max()
-        psi = float(psi_law(th, self.eta, self.gam))
+        psi = self._psi(th)
         if th < lo:
             # before the first expiry: rho fixed, psi on the law but capped at the Gatheral-Jacquier bound (the
             # solver may start here, so these slices must be butterfly-free); the cap ~ sqrt(theta) keeps psi

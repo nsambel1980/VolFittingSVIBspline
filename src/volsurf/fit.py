@@ -57,12 +57,14 @@ def slice_jacobian(mk, q):
     dpsi_th = p * ((1 - gam) / t + (gam - 1) / (1 + t))
     w_psi = w_p + w_r * r_p                                            # total derivative through psi
     vg = vega_w(k, w)
-    J = np.zeros((len(k), 2 * nT + 2))
+    J = np.zeros((len(k), len(q)))
     rows = np.arange(len(k))
     J[rows, i] = vg * (w_t + w_psi * dpsi_th)
     J[rows, nT + i] = vg * w_r * r_s
     J[:, 2 * nT] = vg * w_psi * p / eta
     J[:, 2 * nT + 1] = vg * w_psi * p * np.log((1 + t) / t)
+    if len(q) == 3 * nT + 2:                                           # d psi / d u_i = psi_i
+        J[rows, 2 * nT + 2 + i] = vg * w_psi * p
     return J
 
 
@@ -92,7 +94,7 @@ def fit_baseline(mk, cfg, q_init=None, log=None):
     """SSVI slices fitted to the quotes, with the term-structure prior; its scale by Laplace evidence.
     q_init: a previous fit (e.g. yesterday's) used as an extra start."""
     nT = mk["nT"]; lik = QuoteLikelihood(mk, cfg); th = mk["theta_atm"]; T = mk["T"]
-    lo, hi = bounds(th)
+    pf = cfg.psi_free; lo, hi = bounds(th, pf)
 
     def objective(q, sc):
         """value and gradient: data (exact gradient) + penalty and term-structure prior (cheap, numerical)."""
@@ -105,8 +107,8 @@ def fit_baseline(mk, cfg, q_init=None, log=None):
                                   bounds=list(zip(lo, hi)), options=dict(maxiter=5000))
     scales = sorted(cfg.smooth_grid) if nT > 1 else [0.0]
     mid = scales[len(scales) // 2]
-    starts = [initial_q(th), initial_q(th, 1.6, 0.45, -0.8), initial_q(th, 0.8, 0.3, -0.5)]
-    if q_init is not None and len(q_init) == 2 * nT + 2:
+    starts = [initial_q(th, psi_free=pf), initial_q(th, 1.6, 0.45, -0.8, pf), initial_q(th, 0.8, 0.3, -0.5, pf)]
+    if q_init is not None and len(q_init) == len(lo):
         starts.append(np.asarray(q_init, float))
     best = min((run(mid, q0) for q0 in starts), key=lambda r: r.fun)
     scan = {}
@@ -161,7 +163,7 @@ def lm_fit(mk, cfg, q, U, c, tau, a_offset=None, prior_matrix=None, log=None, sm
     """Minimize -ln L + penalty + 1/2 (a_offset + U c)^T P (a_offset + U c) / tau^2 over (q, c).
     Default (no offset, P = P1 with U^T P1 U = I) is the plain prior 1/2 |c|^2 / tau^2."""
     nT, d, K = mk["nT"], len(q), U.shape[1]
-    lik = QuoteLikelihood(mk, cfg); lo, hi = bounds(mk["theta_atm"])
+    lik = QuoteLikelihood(mk, cfg); lo, hi = bounds(mk["theta_atm"], len(q) == 3 * nT + 2)
     a0 = np.zeros(U.shape[0]) if a_offset is None else a_offset
 
     def build(q_, c_):
