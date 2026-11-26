@@ -55,6 +55,7 @@
   1.6
  ],
  "skew_interp": "pchip",
+ "psi_free": true,
  "n_x": 0,
  "dx_spline": 0.45,
  "n_x_max": 41,
